@@ -1,0 +1,40 @@
+server:
+  port: ${GOVERNANCE_PORT:8080}
+
+spring:
+  application:
+    name: ai-runtime-governance
+  datasource:
+    url: ${GOVERNANCE_DB_URL:jdbc:postgresql://127.0.0.1:55434/governance}
+    username: ${GOVERNANCE_DB_USER:postgres}
+    password: ${GOVERNANCE_DB_PASSWORD:}
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  mail:
+    host: ${GOVERNANCE_SMTP_HOST:127.0.0.1}
+    port: ${GOVERNANCE_SMTP_PORT:1025}
+    properties:
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+  jackson:
+    default-property-inclusion: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+governance:
+  base-url: ${GOVERNANCE_BASE_URL:http://127.0.0.1:5173}
+  admin:
+    allowed-os-users: ${GOVERNANCE_ADMIN_USERS:${user.name}}
+  trusted-proxies: ${GOVERNANCE_TRUSTED_PROXIES:}
+  test-control:
+    enabled: ${GOVERNANCE_TEST_CONTROL:false}
+    token: ${GOVERNANCE_TEST_TOKEN:}

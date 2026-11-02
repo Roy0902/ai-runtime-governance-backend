@@ -1,0 +1,17 @@
+server:
+  address: ${GOVERNANCE_BIND_ADDRESS:127.0.0.1}
+
+spring:
+  datasource:
+    url: ${GOVERNANCE_DB_URL:jdbc:postgresql://127.0.0.1:55434/governance}
+    username: ${GOVERNANCE_DB_USER:postgres}
+    password: ${GOVERNANCE_DB_PASSWORD:}
+
+governance:
+  test-control:
+    enabled: true
+    token: ${GOVERNANCE_TEST_TOKEN:test-token}
+    clock-file: ${GOVERNANCE_TEST_CLOCK_FILE:}
+  trusted-proxies: ${GOVERNANCE_TRUSTED_PROXIES:127.0.0.1}
+  mail-identity-per-minute: ${GOVERNANCE_MAIL_IDENTITY_PER_MINUTE:100}
+  mail-identity-per-hour: ${GOVERNANCE_MAIL_IDENTITY_PER_HOUR:1000}
