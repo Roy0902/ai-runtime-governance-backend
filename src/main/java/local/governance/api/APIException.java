@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 
-public class ApiException extends RuntimeException {
+public class APIException extends RuntimeException {
 
     private static final Map<String, HttpStatus> STATUS = Map.ofEntries(
             Map.entry("REQUEST_INVALID", HttpStatus.BAD_REQUEST),
@@ -28,15 +28,15 @@ public class ApiException extends RuntimeException {
     private final Integer retryAfterSeconds;
     private final List<FieldError> fieldErrors;
 
-    public ApiException(String code, String message) {
+    public APIException(String code, String message) {
         this(code, message, null, List.of());
     }
 
-    public ApiException(String code, String message, Integer retryAfterSeconds) {
+    public APIException(String code, String message, Integer retryAfterSeconds) {
         this(code, message, retryAfterSeconds, List.of());
     }
 
-    public ApiException(String code, String message, Integer retryAfterSeconds, List<FieldError> fieldErrors) {
+    public APIException(String code, String message, Integer retryAfterSeconds, List<FieldError> fieldErrors) {
         super(message);
         this.code = code;
         this.status = STATUS.getOrDefault(code, HttpStatus.INTERNAL_SERVER_ERROR);
@@ -62,28 +62,28 @@ public class ApiException extends RuntimeException {
 
     public record FieldError(String field, String message) {}
 
-    public static ApiException invalid(String field, String message) {
-        return new ApiException("REQUEST_INVALID", "Check the highlighted fields and try again.", null,
+    public static APIException invalid(String field, String message) {
+        return new APIException("REQUEST_INVALID", "Check the highlighted fields and try again.", null,
                 List.of(new FieldError(field, message)));
     }
 
-    public static ApiException signInFailed() {
-        return new ApiException("SIGN_IN_FAILED", "Sign-in failed. Check your details and try again.");
+    public static APIException signInFailed() {
+        return new APIException("SIGN_IN_FAILED", "Sign-in failed. Check your details and try again.");
     }
 
-    public static ApiException signInRequired() {
-        return new ApiException("SIGN_IN_REQUIRED", "Sign in to continue.");
+    public static APIException signInRequired() {
+        return new APIException("SIGN_IN_REQUIRED", "Sign in to continue.");
     }
 
-    public static ApiException notFound() {
-        return new ApiException("NOT_FOUND", "We couldn't find that item.");
+    public static APIException notFound() {
+        return new APIException("NOT_FOUND", "We couldn't find that item.");
     }
 
-    public static ApiException unavailable() {
-        return new ApiException("TEMPORARILY_UNAVAILABLE", "The service is temporarily unavailable. Try again shortly.");
+    public static APIException unavailable() {
+        return new APIException("TEMPORARILY_UNAVAILABLE", "The service is temporarily unavailable. Try again shortly.");
     }
 
-    public static ApiException rateLimited(int retryAfterSeconds) {
-        return new ApiException("RATE_LIMITED", "Too many attempts. Try again shortly.", retryAfterSeconds);
+    public static APIException rateLimited(int retryAfterSeconds) {
+        return new APIException("RATE_LIMITED", "Too many attempts. Try again shortly.", retryAfterSeconds);
     }
 }

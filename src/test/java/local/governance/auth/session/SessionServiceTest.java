@@ -14,7 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
-import local.governance.api.ApiException;
+import local.governance.api.APIException;
 import local.governance.auth.crypto.Tokens;
 import local.governance.auth.persistence.AuthRepository;
 import local.governance.auth.persistence.AuthRepository.SessionRow;
@@ -88,13 +88,13 @@ class SessionServiceTest {
         SessionService.Current current = human(NOW.minusSeconds(3600),
                 NOW.minusSeconds(600).minusNanos(1));
         assertFalse(sessions.hasRecentAuth(current));
-        assertThrows(ApiException.class, () -> sessions.requireRecentAuth(current));
+        assertThrows(APIException.class, () -> sessions.requireRecentAuth(current));
     }
 
     @Test
     void expiredHumanAuthorityCannotBeRotatedIntoANewSession() {
         SessionService.Current previous = human(NOW.minus(Duration.ofDays(30)), NOW.minusSeconds(300));
-        assertThrows(ApiException.class, () -> sessions.rotateForSettings(new MockHttpServletResponse(), previous));
+        assertThrows(APIException.class, () -> sessions.rotateForSettings(new MockHttpServletResponse(), previous));
     }
 
     @Test
@@ -109,7 +109,7 @@ class SessionServiceTest {
     @Test
     void settingsRotationDoesNotRefreshAnExpiredConfirmation() {
         SessionService.Current previous = human(NOW.minusSeconds(3600), NOW.minusSeconds(601));
-        assertThrows(ApiException.class, () -> sessions.rotateForSettings(new MockHttpServletResponse(), previous));
+        assertThrows(APIException.class, () -> sessions.rotateForSettings(new MockHttpServletResponse(), previous));
     }
 
     private SessionService.Current human(Instant createdAt, Instant recentAuthAt) {

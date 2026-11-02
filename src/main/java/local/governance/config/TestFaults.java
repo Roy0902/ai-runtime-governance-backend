@@ -64,11 +64,11 @@ public class TestFaults {
         gate.reached.countDown();
         try {
             if (!gate.released.await(10, TimeUnit.SECONDS)) {
-                throw local.governance.api.ApiException.unavailable();
+                throw local.governance.api.APIException.unavailable();
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw local.governance.api.ApiException.unavailable();
+            throw local.governance.api.APIException.unavailable();
         } finally {
             pauseGates.remove(name, gate);
         }

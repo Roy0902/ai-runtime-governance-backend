@@ -6,7 +6,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import local.governance.api.ApiException;
+import local.governance.api.APIException;
 import local.governance.auth.persistence.AuthRepository;
 import local.governance.config.GovernanceProperties;
 import org.springframework.stereotype.Service;
@@ -50,13 +50,13 @@ public class RateLimitService {
         }
         String[] hops = forwarded.split(",");
         if (hops.length > 8) {
-            throw new ApiException("REQUEST_INVALID", "Malformed forwarding metadata.");
+            throw new APIException("REQUEST_INVALID", "Malformed forwarding metadata.");
         }
         String selected = null;
         for (int index = hops.length - 1; index >= 0; index -= 1) {
             String candidate = normalize(hops[index].trim());
             if (candidate == null) {
-                throw new ApiException("REQUEST_INVALID", "Malformed forwarding metadata.");
+                throw new APIException("REQUEST_INVALID", "Malformed forwarding metadata.");
             }
             selected = candidate;
             if (!isTrusted(candidate)) {
@@ -71,7 +71,7 @@ public class RateLimitService {
         Instant now = clock.instant();
         long count = repository.countRateEvents(type, key, now.minus(window), now);
         if (count >= limit) {
-            throw ApiException.rateLimited(retryAfterSeconds);
+            throw APIException.rateLimited(retryAfterSeconds);
         }
         repository.recordRateEvent(type, key, now);
     }
@@ -80,11 +80,11 @@ public class RateLimitService {
         Instant now = clock.instant();
         long lastMinute = repository.countRateEvents(MAIL_IDENTITY, email, now.minusSeconds(60), now);
         if (lastMinute >= mailIdentityPerMinute) {
-            throw ApiException.rateLimited(60);
+            throw APIException.rateLimited(60);
         }
         long lastHour = repository.countRateEvents(MAIL_IDENTITY, email, now.minusSeconds(3600), now);
         if (lastHour >= mailIdentityPerHour) {
-            throw ApiException.rateLimited(3600);
+            throw APIException.rateLimited(3600);
         }
         ensureBucket(MAIL_IDENTITY, email);
         repository.recordRateEvent(MAIL_IDENTITY, email, now);
@@ -95,7 +95,7 @@ public class RateLimitService {
         Instant until = repository.cooldown(email).orElse(null);
         if (until != null && now.isBefore(until)) {
             long seconds = Math.max(1, Duration.between(now, until).toSeconds());
-            throw ApiException.rateLimited((int) seconds);
+            throw APIException.rateLimited((int) seconds);
         }
     }
 
@@ -122,7 +122,7 @@ public class RateLimitService {
 
     private void ensureBucket(String type, String key) {
         if (repository.countBuckets(type) >= MAX_BUCKETS) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
     }
 

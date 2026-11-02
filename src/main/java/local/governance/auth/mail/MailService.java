@@ -4,7 +4,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
-import local.governance.api.ApiException;
+import local.governance.api.APIException;
 import local.governance.auth.crypto.SeedCipher;
 import local.governance.auth.crypto.Tokens;
 import local.governance.auth.persistence.AuthRepository;
@@ -45,10 +45,10 @@ public class MailService {
 
     private void issue(UUID accountId, String email, String purpose, Duration lifetime) {
         if (faults.enabled("mail-admission")) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
         if (repository.uncompletedMailCount() >= MAX_UNCOMPLETED) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
         Instant now = clock.instant();
         repository.supersedeCurrentLinks(accountId, purpose, now);

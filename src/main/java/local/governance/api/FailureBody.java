@@ -8,5 +8,5 @@ public record FailureBody(
         String message,
         UUID correlationId,
         Integer retryAfterSeconds,
-        List<ApiException.FieldError> fieldErrors) {
+        List<APIException.FieldError> fieldErrors) {
 }

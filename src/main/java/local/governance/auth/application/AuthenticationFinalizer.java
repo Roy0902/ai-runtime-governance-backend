@@ -4,9 +4,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Clock;
 import java.util.UUID;
-import local.governance.api.ApiException;
-import local.governance.api.ApiDtos.ContextDto;
-import local.governance.api.ApiDtos.Factor;
+import local.governance.api.APIException;
+import local.governance.api.ContextDTO;
+import local.governance.api.Factor;
 import local.governance.auth.persistence.AuthRepository;
 import local.governance.auth.persistence.AuthRepository.AccountRow;
 import local.governance.auth.session.ContextMapper;
@@ -34,16 +34,16 @@ public class AuthenticationFinalizer {
     }
 
     @Transactional
-    public ContextDto complete(UUID accountId, long credentialVersion, Factor factor,
+    public ContextDTO complete(UUID accountId, long credentialVersion, Factor factor,
             HttpServletRequest request, HttpServletResponse response) {
         AccountRow account = repository.accountByIdForUpdate(accountId)
-                .orElseThrow(ApiException::signInFailed);
+                .orElseThrow(APIException::signInFailed);
         if (account.version() != credentialVersion
                 || !"VERIFIED".equals(account.status())
                 || account.emailVerifiedAt() == null
                 || !"ENROLLED".equals(account.mfaState())
                 || account.recoveryRequiredAt() != null) {
-            throw ApiException.signInFailed();
+            throw APIException.signInFailed();
         }
 
         factors.verify(account, factor);

@@ -2,15 +2,15 @@ package local.governance.auth.api;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import local.governance.api.ApiDtos.ContextDto;
-import local.governance.api.ApiDtos.CredentialsBody;
-import local.governance.api.ApiDtos.EmailBody;
-import local.governance.api.ApiDtos.MailAcceptedDto;
-import local.governance.api.ApiDtos.PasswordResetBody;
-import local.governance.api.ApiDtos.ReauthenticationBody;
-import local.governance.api.ApiDtos.RegistrationBody;
-import local.governance.api.ApiDtos.SignInBody;
-import local.governance.api.ApiDtos.TokenBody;
+import local.governance.api.ContextDTO;
+import local.governance.api.CredentialsBody;
+import local.governance.api.EmailBody;
+import local.governance.api.MailAcceptedDTO;
+import local.governance.api.PasswordResetBody;
+import local.governance.api.ReauthenticationBody;
+import local.governance.api.RegistrationBody;
+import local.governance.api.SignInBody;
+import local.governance.api.TokenBody;
 import local.governance.auth.application.AuthService;
 import local.governance.auth.session.SessionService;
 import org.springframework.http.HttpStatus;
@@ -34,13 +34,13 @@ public class AuthController {
     }
 
     @GetMapping("/context")
-    public ContextDto context(HttpServletRequest request, HttpServletResponse response) {
+    public ContextDTO context(HttpServletRequest request, HttpServletResponse response) {
         return auth.context(request, response);
     }
 
     @PostMapping("/registrations")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public MailAcceptedDto register(@RequestBody RegistrationBody body, HttpServletRequest request,
+    public MailAcceptedDTO register(@RequestBody RegistrationBody body, HttpServletRequest request,
             HttpServletResponse response) {
         sessions.requireCsrfIfBrowser(request);
         return auth.register(body, request, response);
@@ -48,20 +48,20 @@ public class AuthController {
 
     @PostMapping("/email-verifications/resend")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public MailAcceptedDto resend(@RequestBody EmailBody body, HttpServletRequest request) {
+    public MailAcceptedDTO resend(@RequestBody EmailBody body, HttpServletRequest request) {
         sessions.requireCsrfIfBrowser(request);
         return auth.resend(body, request);
     }
 
     @PostMapping("/email-verifications/consume")
-    public ContextDto verify(@RequestBody TokenBody body, HttpServletRequest request, HttpServletResponse response) {
+    public ContextDTO verify(@RequestBody TokenBody body, HttpServletRequest request, HttpServletResponse response) {
         sessions.requireCsrfIfBrowser(request);
         return auth.verify(body, request, response);
     }
 
     @PostMapping("/password-resets")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public MailAcceptedDto requestReset(@RequestBody EmailBody body, HttpServletRequest request) {
+    public MailAcceptedDTO requestReset(@RequestBody EmailBody body, HttpServletRequest request) {
         sessions.requireCsrfIfBrowser(request);
         return auth.requestReset(body, request);
     }
@@ -75,14 +75,14 @@ public class AuthController {
     }
 
     @PostMapping("/setup-access")
-    public ContextDto setupAccess(@RequestBody CredentialsBody body, HttpServletRequest request,
+    public ContextDTO setupAccess(@RequestBody CredentialsBody body, HttpServletRequest request,
             HttpServletResponse response) {
         sessions.requireCsrfIfBrowser(request);
         return auth.setupAccess(body, request, response);
     }
 
     @PostMapping("/sign-in")
-    public ContextDto signIn(@RequestBody SignInBody body, HttpServletRequest request, HttpServletResponse response) {
+    public ContextDTO signIn(@RequestBody SignInBody body, HttpServletRequest request, HttpServletResponse response) {
         sessions.requireCsrfIfBrowser(request);
         return auth.signIn(body, request, response);
     }
@@ -95,7 +95,7 @@ public class AuthController {
     }
 
     @PostMapping("/reauthentication")
-    public ContextDto reauthenticate(@RequestBody ReauthenticationBody body, HttpServletRequest request) {
+    public ContextDTO reauthenticate(@RequestBody ReauthenticationBody body, HttpServletRequest request) {
         sessions.requireCsrfIfBrowser(request);
         return auth.reauthenticate(body, request);
     }

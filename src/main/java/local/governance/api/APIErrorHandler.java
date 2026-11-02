@@ -14,12 +14,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
-public class ApiErrorHandler {
+public class APIErrorHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(ApiErrorHandler.class);
+    private static final Logger log = LoggerFactory.getLogger(APIErrorHandler.class);
 
-    @ExceptionHandler(ApiException.class)
-    public ResponseEntity<FailureBody> handle(ApiException exception, HttpServletRequest request) {
+    @ExceptionHandler(APIException.class)
+    public ResponseEntity<FailureBody> handle(APIException exception, HttpServletRequest request) {
         UUID correlationId = correlationId(request);
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.CACHE_CONTROL, "no-store");
@@ -38,7 +38,7 @@ public class ApiErrorHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<FailureBody> malformed(HttpServletRequest request) {
-        return handle(new ApiException("REQUEST_INVALID", "Check the request and try again."), request);
+        return handle(new APIException("REQUEST_INVALID", "Check the request and try again."), request);
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
@@ -58,13 +58,13 @@ public class ApiErrorHandler {
 
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<FailureBody> missingRoute(HttpServletRequest request) {
-        return handle(new ApiException("NOT_FOUND", "We couldn't find that item."), request);
+        return handle(new APIException("NOT_FOUND", "We couldn't find that item."), request);
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<FailureBody> unexpected(Exception exception, HttpServletRequest request) {
         log.error("unhandled request failure", exception);
-        return handle(new ApiException("INTERNAL_ERROR", "Something went wrong. Try again."), request);
+        return handle(new APIException("INTERNAL_ERROR", "Something went wrong. Try again."), request);
     }
 
     private UUID correlationId(HttpServletRequest request) {

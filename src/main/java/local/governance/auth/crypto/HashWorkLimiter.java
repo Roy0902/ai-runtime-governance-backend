@@ -7,7 +7,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import local.governance.api.ApiException;
+import local.governance.api.APIException;
 import local.governance.config.TestFaults;
 import org.springframework.stereotype.Component;
 
@@ -36,26 +36,26 @@ public class HashWorkLimiter {
 
     public <T> T submit(Callable<T> task) {
         if (faults.enabled("hash-service")) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
         Future<T> future;
         try {
             future = executor.submit(task);
         } catch (RejectedExecutionException exception) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
         try {
             return future.get(2, TimeUnit.SECONDS);
         } catch (TimeoutException exception) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         } catch (java.util.concurrent.ExecutionException exception) {
-            if (exception.getCause() instanceof ApiException apiException) {
+            if (exception.getCause() instanceof APIException apiException) {
                 throw apiException;
             }
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
     }
 

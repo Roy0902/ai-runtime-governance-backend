@@ -11,9 +11,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
-import local.governance.api.ApiDtos.ContextDto;
-import local.governance.api.ApiDtos.Factor;
-import local.governance.api.ApiException;
+import local.governance.api.ContextDTO;
+import local.governance.api.Factor;
+import local.governance.api.APIException;
 import local.governance.auth.persistence.AuthRepository;
 import local.governance.auth.persistence.AuthRepository.AccountRow;
 import local.governance.auth.session.ContextMapper;
@@ -50,7 +50,7 @@ class AuthenticationFinalizerTest {
         AccountRow changed = account(8, "VERIFIED", "ENROLLED", null);
         when(repository.accountByIdForUpdate(changed.id())).thenReturn(Optional.of(changed));
 
-        assertThrows(ApiException.class, () -> finalizer.complete(
+        assertThrows(APIException.class, () -> finalizer.complete(
                 changed.id(), 7, FACTOR, new MockHttpServletRequest(), new MockHttpServletResponse()));
 
         verify(factors, never()).verify(changed, FACTOR);
@@ -65,7 +65,7 @@ class AuthenticationFinalizerTest {
         AccountRow disabled = account(7, "DISABLED", "ENROLLED", null);
         when(repository.accountByIdForUpdate(disabled.id())).thenReturn(Optional.of(disabled));
 
-        assertThrows(ApiException.class, () -> finalizer.complete(
+        assertThrows(APIException.class, () -> finalizer.complete(
                 disabled.id(), 7, FACTOR, new MockHttpServletRequest(), new MockHttpServletResponse()));
 
         verify(factors, never()).verify(disabled, FACTOR);
@@ -85,9 +85,9 @@ class AuthenticationFinalizerTest {
                 org.mockito.ArgumentMatchers.eq(NOW)))
                 .thenReturn(org.mockito.Mockito.mock(SessionService.Current.class));
         when(contexts.context(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(current)))
-                .thenReturn(new ContextDto("HUMAN", "csrf", null, null, null));
+                .thenReturn(new ContextDTO("HUMAN", "csrf", null, null, null));
 
-        ContextDto result = finalizer.complete(
+        ContextDTO result = finalizer.complete(
                 current.id(), 7, FACTOR, new MockHttpServletRequest(), new MockHttpServletResponse());
 
         assertNotNull(result);

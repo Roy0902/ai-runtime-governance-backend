@@ -15,14 +15,14 @@ import local.governance.config.GovernanceProperties;
 import org.springframework.stereotype.Component;
 
 @Component
-public class AdminCli {
+public class AdminCLI {
 
     private final AdminService admin;
     private final AuthRepository repository;
     private final SeedKeyProvider keys;
     private final GovernanceProperties properties;
 
-    public AdminCli(AdminService admin, AuthRepository repository, SeedKeyProvider keys,
+    public AdminCLI(AdminService admin, AuthRepository repository, SeedKeyProvider keys,
             GovernanceProperties properties) {
         this.admin = admin;
         this.repository = repository;
@@ -35,6 +35,7 @@ public class AdminCli {
             if (args.length < 2) {
                 throw new AdminException(2, "USAGE", "usage: arg-admin <group> <action> [options]");
             }
+            
             String operator = operator();
             Map<String, String> options = options(args);
             String group = args[0];

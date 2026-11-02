@@ -12,7 +12,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
-import local.governance.api.ApiException;
+import local.governance.api.APIException;
 import local.governance.auth.crypto.Tokens;
 import local.governance.auth.persistence.AuthRepository;
 import local.governance.auth.persistence.AuthRepository.SessionRow;
@@ -64,9 +64,9 @@ public class SessionService {
     }
 
     public Current require(HttpServletRequest request, String... contexts) {
-        Current current = read(request).orElseThrow(ApiException::signInRequired);
+        Current current = read(request).orElseThrow(APIException::signInRequired);
         if (Arrays.stream(contexts).noneMatch((allowed) -> allowed.equals(current.context()))) {
-            throw ApiException.signInRequired();
+            throw APIException.signInRequired();
         }
         return current;
     }
@@ -134,7 +134,7 @@ public class SessionService {
         SessionRow row = previous.row();
         if (!"HUMAN".equals(previous.context()) || !"ACTIVE".equals(row.state())
                 || !now.isBefore(row.absoluteExpiresAt()) || !now.isBefore(row.idleExpiresAt())) {
-            throw ApiException.signInRequired();
+            throw APIException.signInRequired();
         }
         requireRecentAuth(previous);
         Instant idleExpiresAt = now.plus(HUMAN_IDLE);
@@ -159,11 +159,11 @@ public class SessionService {
     public void requireCsrf(HttpServletRequest request, Current current) {
         String origin = request.getHeader(HttpHeaders.ORIGIN);
         if (origin != null && !originAllowed(origin)) {
-            throw new ApiException("CSRF_REJECTED", "Your session changed. Reload the page and try again.");
+            throw new APIException("CSRF_REJECTED", "Your session changed. Reload the page and try again.");
         }
         String header = request.getHeader("X-CSRF-Token");
         if (header == null || header.isBlank()) {
-            throw new ApiException("CSRF_REJECTED", "Your session changed. Reload the page and try again.");
+            throw new APIException("CSRF_REJECTED", "Your session changed. Reload the page and try again.");
         }
         boolean matches;
         try {
@@ -173,7 +173,7 @@ public class SessionService {
             matches = false;
         }
         if (!matches) {
-            throw new ApiException("CSRF_REJECTED", "Your session changed. Reload the page and try again.");
+            throw new APIException("CSRF_REJECTED", "Your session changed. Reload the page and try again.");
         }
     }
 
@@ -187,7 +187,7 @@ public class SessionService {
             return;
         }
         Current current = read(request)
-                .orElseThrow(() -> new ApiException("CSRF_REJECTED", "Your session changed. Reload the page and try again."));
+                .orElseThrow(() -> new APIException("CSRF_REJECTED", "Your session changed. Reload the page and try again."));
         requireCsrf(request, current);
     }
 
@@ -198,7 +198,7 @@ public class SessionService {
 
     public void requireRecentAuth(Current current) {
         if (!hasRecentAuth(current)) {
-            throw new ApiException("RECENT_AUTH_REQUIRED", "Confirm your identity to continue.");
+            throw new APIException("RECENT_AUTH_REQUIRED", "Confirm your identity to continue.");
         }
     }
 

@@ -2,7 +2,7 @@ package local.governance.auth.domain;
 
 import java.util.Locale;
 import java.util.regex.Pattern;
-import local.governance.api.ApiException;
+import local.governance.api.APIException;
 
 public final class EmailIdentity {
 
@@ -13,15 +13,15 @@ public final class EmailIdentity {
 
     public static String normalize(String raw) {
         if (raw == null) {
-            throw ApiException.invalid("email", "Enter a valid email address.");
+            throw APIException.invalid("email", "Enter a valid email address.");
         }
         String trimmed = raw.strip();
         if (trimmed.isEmpty() || trimmed.length() < 3 || trimmed.length() > 254) {
-            throw ApiException.invalid("email", "Enter a valid email address.");
+            throw APIException.invalid("email", "Enter a valid email address.");
         }
         String normalized = trimmed.toLowerCase(Locale.ROOT);
         if (!ADDRESS.matcher(normalized).matches()) {
-            throw ApiException.invalid("email", "Enter a valid email address.");
+            throw APIException.invalid("email", "Enter a valid email address.");
         }
         return normalized;
     }

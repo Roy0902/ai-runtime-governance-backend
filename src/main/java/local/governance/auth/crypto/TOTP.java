@@ -10,7 +10,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.springframework.stereotype.Component;
 
 @Component
-public class Totp {
+public class TOTP {
 
     private static final String ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     private static final long STEP_SECONDS = 30;

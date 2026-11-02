@@ -6,15 +6,15 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
-import local.governance.api.ApiDtos.ContextDto;
-import local.governance.api.ApiDtos.CredentialsBody;
-import local.governance.api.ApiDtos.EmailBody;
-import local.governance.api.ApiDtos.MailAcceptedDto;
-import local.governance.api.ApiDtos.PasswordResetBody;
-import local.governance.api.ApiDtos.RegistrationBody;
-import local.governance.api.ApiDtos.SignInBody;
-import local.governance.api.ApiDtos.TokenBody;
-import local.governance.api.ApiException;
+import local.governance.api.ContextDTO;
+import local.governance.api.CredentialsBody;
+import local.governance.api.EmailBody;
+import local.governance.api.MailAcceptedDTO;
+import local.governance.api.PasswordResetBody;
+import local.governance.api.RegistrationBody;
+import local.governance.api.SignInBody;
+import local.governance.api.TokenBody;
+import local.governance.api.APIException;
 import local.governance.auth.crypto.HashWorkLimiter;
 import local.governance.auth.crypto.Passwords;
 import local.governance.auth.crypto.Tokens;
@@ -77,7 +77,7 @@ public class AuthService {
         this.faults = faults;
     }
 
-    public ContextDto context(HttpServletRequest request, HttpServletResponse response) {
+    public ContextDTO context(HttpServletRequest request, HttpServletResponse response) {
         AccountRow account = null;
         SessionService.Current current = sessions.read(request).orElse(null);
         if (current != null && current.accountId() != null) {
@@ -95,39 +95,39 @@ public class AuthService {
     }
 
     @Transactional
-    public MailAcceptedDto register(RegistrationBody body, HttpServletRequest request, HttpServletResponse response) {
+    public MailAcceptedDTO register(RegistrationBody body, HttpServletRequest request, HttpServletResponse response) {
         String email = EmailIdentity.normalize(body.email());
         PasswordPolicy.validateNew(body.password(), "password");
         rateLimit.admit(RateLimitService.SIGNUP_SOURCE, rateLimit.sourceKey(request), Duration.ofHours(1), 10, 3600);
         rateLimit.checkMailIdentity(email);
 
         if (repository.accountByEmail(email).isPresent()) {
-            return new MailAcceptedDto(ACCEPTED);
+            return new MailAcceptedDTO(ACCEPTED);
         }
         String hash = hashLimiter.submit(() -> passwords.hash(body.password()));
         UUID accountId = UUID.randomUUID();
         repository.insertAccount(accountId, email, hash, clock.instant());
         mailService.issueVerification(accountId, email);
-        return new MailAcceptedDto(ACCEPTED);
+        return new MailAcceptedDTO(ACCEPTED);
     }
 
     @Transactional
-    public ContextDto verify(TokenBody body, HttpServletRequest request, HttpServletResponse response) {
+    public ContextDTO verify(TokenBody body, HttpServletRequest request, HttpServletResponse response) {
         String token = body.token();
         if (token == null || token.isBlank()) {
-            throw ApiException.notFound();
+            throw APIException.notFound();
         }
         Instant now = clock.instant();
         LinkRow link = repository.lockLinkByToken(tokens.hash(token)).orElseThrow(
-                () -> new ApiException("LINK_NOT_USABLE", "This link can't be used. Request a new email."));
+                () -> new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email."));
         if (!"VERIFY".equals(link.purpose()) || link.consumedAt() != null || link.supersededAt() != null
                 || !now.isBefore(link.expiresAt()) || !repository.consumeLink(link.id(), now)) {
-            throw new ApiException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
+            throw new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
         }
         if (faults.enabled("consume-rollback")) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
-        AccountRow account = repository.accountById(link.accountId()).orElseThrow(ApiException::notFound);
+        AccountRow account = repository.accountById(link.accountId()).orElseThrow(APIException::notFound);
         if (account.emailVerifiedAt() == null) {
             repository.markVerified(account.id(), now);
         }
@@ -143,56 +143,56 @@ public class AuthService {
     }
 
     @Transactional
-    public MailAcceptedDto resend(EmailBody body, HttpServletRequest request) {
+    public MailAcceptedDTO resend(EmailBody body, HttpServletRequest request) {
         String email = EmailIdentity.normalize(body.email());
         if (faults.enabled("mail-admission")) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
         rateLimit.admit(RateLimitService.MAIL_SOURCE, rateLimit.sourceKey(request), Duration.ofHours(1), 20, 3600);
         rateLimit.checkMailIdentity(email);
         repository.accountByEmail(email)
                 .filter((account) -> "PENDING".equals(account.status()) && account.emailVerifiedAt() == null)
                 .ifPresent((account) -> mailService.issueVerification(account.id(), account.email()));
-        return new MailAcceptedDto(ACCEPTED);
+        return new MailAcceptedDTO(ACCEPTED);
     }
 
     @Transactional
-    public MailAcceptedDto requestReset(EmailBody body, HttpServletRequest request) {
+    public MailAcceptedDTO requestReset(EmailBody body, HttpServletRequest request) {
         String email = EmailIdentity.normalize(body.email());
         if (faults.enabled("mail-admission")) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
         rateLimit.admit(RateLimitService.MAIL_SOURCE, rateLimit.sourceKey(request), Duration.ofHours(1), 20, 3600);
         rateLimit.checkMailIdentity(email);
         repository.accountByEmail(email)
                 .filter((account) -> account.emailVerifiedAt() != null && !"DISABLED".equals(account.status()))
                 .ifPresent((account) -> mailService.issueReset(account.id(), account.email()));
-        return new MailAcceptedDto(ACCEPTED);
+        return new MailAcceptedDTO(ACCEPTED);
     }
 
     @Transactional
     public void consumeReset(PasswordResetBody body, HttpServletResponse response) {
         PasswordPolicy.validateNew(body.newPassword(), "newPassword");
         if (body.token() == null || body.token().isBlank()) {
-            throw new ApiException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
+            throw new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
         }
         Instant now = clock.instant();
         LinkRow link = repository.lockLinkByToken(tokens.hash(body.token())).orElseThrow(
-                () -> new ApiException("LINK_NOT_USABLE", "This link can't be used. Request a new email."));
+                () -> new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email."));
         if (!"RESET".equals(link.purpose()) || link.consumedAt() != null || link.supersededAt() != null
                 || !now.isBefore(link.expiresAt())) {
-            throw new ApiException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
+            throw new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
         }
         String hash = hashLimiter.submit(() -> passwords.hash(body.newPassword()));
         if (!repository.consumeLink(link.id(), now)) {
-            throw new ApiException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
+            throw new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
         }
         repository.updatePassword(link.accountId(), hash, now);
         repository.revokeAllSessions(link.accountId(), now);
         sessions.clearCookie(response);
     }
 
-    public ContextDto setupAccess(CredentialsBody body, HttpServletRequest request, HttpServletResponse response) {
+    public ContextDTO setupAccess(CredentialsBody body, HttpServletRequest request, HttpServletResponse response) {
         String email = EmailIdentity.normalize(body.email());
         rateLimit.admit(RateLimitService.AUTH_SOURCE, rateLimit.sourceKey(request), Duration.ofSeconds(60), 30, 60);
         rateLimit.checkCooldown(email);
@@ -200,17 +200,17 @@ public class AuthService {
                 .filter((candidate) -> candidate.emailVerifiedAt() != null && !"DISABLED".equals(candidate.status()))
                 .orElseThrow(() -> {
                     rateLimit.recordFailure(email);
-                    return new ApiException("SETUP_ACCESS_FAILED", "Sign-in failed. Check your details and try again.");
+                    return new APIException("SETUP_ACCESS_FAILED", "Sign-in failed. Check your details and try again.");
                 });
         Passwords.Verification verification = hashLimiter.submit(
                 () -> passwords.verify(body.password() == null ? "" : body.password(), account.passwordHash()));
         if (verification == Passwords.Verification.FAILED) {
             rateLimit.recordFailure(email);
-            throw new ApiException("SETUP_ACCESS_FAILED", "Sign-in failed. Check your details and try again.");
+            throw new APIException("SETUP_ACCESS_FAILED", "Sign-in failed. Check your details and try again.");
         }
         if ("ENROLLED".equals(account.mfaState()) && account.recoveryRequiredAt() == null) {
             rateLimit.recordFailure(email);
-            throw new ApiException("SETUP_ACCESS_FAILED", "Sign-in failed. Check your details and try again.");
+            throw new APIException("SETUP_ACCESS_FAILED", "Sign-in failed. Check your details and try again.");
         }
         rateLimit.clearFailures(email);
         String purpose = account.recoveryRequiredAt() == null ? "INITIAL_ENROLLMENT" : "RECOVERY_ENROLLMENT";
@@ -221,7 +221,7 @@ public class AuthService {
         return contexts.context(current, account);
     }
 
-    public ContextDto signIn(SignInBody body, HttpServletRequest request, HttpServletResponse response) {
+    public ContextDTO signIn(SignInBody body, HttpServletRequest request, HttpServletResponse response) {
         String email = EmailIdentity.normalize(body.email());
         rateLimit.admit(RateLimitService.AUTH_SOURCE, rateLimit.sourceKey(request), Duration.ofSeconds(60), 30, 60);
         rateLimit.checkCooldown(email);
@@ -251,7 +251,7 @@ public class AuthService {
         try {
             return authenticationFinalizer.complete(account.id(), sessionVersion, body.secondFactor(),
                     request, response);
-        } catch (ApiException exception) {
+        } catch (APIException exception) {
             if ("SIGN_IN_FAILED".equals(exception.code())) {
                 throw credentialFailure(email);
             }
@@ -264,17 +264,17 @@ public class AuthService {
         sessions.clearCookie(response);
     }
 
-    public ContextDto reauthenticate(local.governance.api.ApiDtos.ReauthenticationBody body, HttpServletRequest request) {
+    public ContextDTO reauthenticate(local.governance.api.ReauthenticationBody body, HttpServletRequest request) {
         SessionService.Current current = sessions.requireHuman(request);
-        AccountRow account = repository.accountById(current.accountId()).orElseThrow(ApiException::signInRequired);
+        AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
         Passwords.Verification verification = hashLimiter.submit(
                 () -> passwords.verify(body.password() == null ? "" : body.password(), account.passwordHash()));
         if (verification == Passwords.Verification.FAILED) {
-            throw ApiException.signInFailed();
+            throw APIException.signInFailed();
         }
         try {
             factors.verify(account, body.secondFactor());
-        } catch (ApiException exception) {
+        } catch (APIException exception) {
             throw exception;
         }
         sessions.setRecentAuth(current);
@@ -282,28 +282,28 @@ public class AuthService {
         return contexts.context(refreshed, account);
     }
 
-    public local.governance.api.ApiDtos.AccountDto account(HttpServletRequest request) {
+    public local.governance.api.AccountDTO account(HttpServletRequest request) {
         SessionService.Current current = sessions.requireHuman(request);
-        AccountRow account = repository.accountById(current.accountId()).orElseThrow(ApiException::signInRequired);
+        AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
         sessions.touch(current);
         return contexts.account(account, current);
     }
 
-    private ApiException credentialFailure(String email) {
+    private APIException credentialFailure(String email) {
         RateLimitService.FailureOutcome outcome = rateLimit.recordFailure(email);
         if (outcome.count() == 5 || outcome.count() == 10 || outcome.count() == 20) {
-            return ApiException.rateLimited(outcome.delaySeconds());
+            return APIException.rateLimited(outcome.delaySeconds());
         }
-        return ApiException.signInFailed();
+        return APIException.signInFailed();
     }
 
     @Transactional
-    public ContextDto changePassword(local.governance.api.ApiDtos.PasswordChangeBody body, HttpServletRequest request,
+    public ContextDTO changePassword(local.governance.api.PasswordChangeBody body, HttpServletRequest request,
             HttpServletResponse response) {
         SessionService.Current current = sessions.requireHuman(request);
         sessions.requireRecentAuth(current);
         PasswordPolicy.validateNew(body.newPassword(), "newPassword");
-        AccountRow account = repository.accountById(current.accountId()).orElseThrow(ApiException::signInRequired);
+        AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
         String hash = hashLimiter.submit(() -> passwords.hash(body.newPassword()));
         Instant now = clock.instant();
         repository.updatePassword(account.id(), hash, now);

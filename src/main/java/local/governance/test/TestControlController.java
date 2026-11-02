@@ -11,7 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import local.governance.api.ApiException;
+import local.governance.api.APIException;
 import local.governance.auth.crypto.HashWorkLimiter;
 import local.governance.auth.crypto.Passwords;
 import local.governance.auth.mail.MailWorker;
@@ -109,9 +109,9 @@ public class TestControlController {
                 .filter(row -> row.emailVerifiedAt() != null
                         && "VERIFIED".equals(row.status())
                         && "ENROLLED".equals(row.mfaState()))
-                .orElseThrow(ApiException::signInFailed);
+                .orElseThrow(APIException::signInFailed);
         if (passwords.verify(password, account.passwordHash()) != Passwords.Verification.CURRENT) {
-            throw ApiException.signInFailed();
+            throw APIException.signInFailed();
         }
         String predecessor = hashLimiter.submit(() -> passwords.hashPredecessorForTest(password));
         repository.updatePassword(account.id(), predecessor, clock.instant());
@@ -213,13 +213,13 @@ public class TestControlController {
                     "unsupported", Map.of("failure", "explicit"),
                     "unreviewed", Map.of("failure", "explicit"),
                     "malformed", Map.of("failure", "explicit"));
-            default -> throw new ApiException("NOT_FOUND", "Unknown inspection.");
+            default -> throw new APIException("NOT_FOUND", "Unknown inspection.");
         };
     }
 
     private Map<String, Object> barrier(String name) {
         if (!"predecessor-rehash-after-derive".equals(name)) {
-            throw new ApiException("NOT_FOUND", "Unknown inspection.");
+            throw new APIException("NOT_FOUND", "Unknown inspection.");
         }
         return Map.of("waiting", faults.isPaused(name));
     }
@@ -305,7 +305,7 @@ public class TestControlController {
         if (clock instanceof MutableClock mutable) {
             return mutable;
         }
-        throw ApiException.unavailable();
+        throw APIException.unavailable();
     }
 
     private void writeClockSnapshot(Instant instant) {
@@ -321,7 +321,7 @@ public class TestControlController {
             }
             Files.writeString(file, instant.toString());
         } catch (IOException exception) {
-            throw ApiException.unavailable();
+            throw APIException.unavailable();
         }
     }
 
@@ -329,7 +329,7 @@ public class TestControlController {
         if (!properties.getTestControl().isEnabled()
                 || token == null
                 || !token.equals(properties.getTestControl().getToken())) {
-            throw new ApiException("FORBIDDEN", "Test control is not available.");
+            throw new APIException("FORBIDDEN", "Test control is not available.");
         }
     }
 }
