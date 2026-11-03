@@ -78,25 +78,23 @@ public class EnrollmentService {
     }
 
     @Transactional
-    public AuthenticatorSecretsDTO start(StartOperationBody body, HttpServletRequest request, HttpServletResponse response) {
+    public AuthenticatorSecretsDTO start(StartOperationBody body, HttpServletRequest request) {
         SessionService.Current current = sessions.requireSetup(request);
         AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
-        UUID operationId = body.operationId() == null ? UUID.randomUUID() : body.operationId();
-        if (repository.operationById(operationId).isPresent()) {
-            throw new APIException("STALE_OPERATION", "This setup is no longer current. Start again.");
-        }
-        return createEnrollment(account, current.purpose(), operationId);
+        UUID operationId = requireOperationId(body.operationId());
+        Instant now = clock.instant();
+        repository.supersedePendingOperations(account.id(), current.purpose(), now);
+        return createAuthenticatorOperation(account, current.purpose(), operationId);
     }
 
     @Transactional
-    public AuthenticatorSecretsDTO restart(RestartEnrollmentBody body, HttpServletRequest request,
-            HttpServletResponse response) {
+    public AuthenticatorSecretsDTO restart(RestartEnrollmentBody body, HttpServletRequest request) {
         SessionService.Current current = sessions.requireSetup(request);
         AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
         verifyPassword(account, body.password());
-        UUID operationId = body.operationId() == null ? UUID.randomUUID() : body.operationId();
+        UUID operationId = requireOperationId(body.operationId());
         repository.supersedePendingOperations(account.id(), current.purpose(), clock.instant());
-        return createEnrollment(account, current.purpose(), operationId);
+        return createAuthenticatorOperation(account, current.purpose(), operationId);
     }
 
     public OperationDTO readEnrollment(HttpServletRequest request) {
@@ -111,7 +109,8 @@ public class EnrollmentService {
         SessionService.Current current = sessions.requireSetup(request);
         AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
         Instant now = clock.instant();
-        OperationRow operation = repository.lockOperation(body.operationId())
+        UUID operationId = requireOperationId(body.operationId());
+        OperationRow operation = repository.lockOperation(operationId)
                 .orElseThrow(() -> new APIException("STALE_OPERATION", "This setup is no longer current. Start again."));
         if (!account.id().equals(operation.accountId()) || !"PENDING".equals(operation.state())
                 || !current.purpose().equals(operation.purpose())) {
@@ -120,9 +119,10 @@ public class EnrollmentService {
         if (!now.isBefore(operation.expiresAt())) {
             throw new APIException("OPERATION_EXPIRED", "This setup expired. Start again.");
         }
-        if (body.password() != null && !body.password().isBlank()) {
-            verifyPassword(account, body.password());
+        if (body.password() == null) {
+            throw APIException.invalid("password", "Enter your password.");
         }
+        verifyPassword(account, body.password());
         if (!body.recoveryCodesSaved()) {
             throw APIException.invalid("recoveryCodesSaved", "Confirm that you saved your recovery codes.");
         }
@@ -141,14 +141,13 @@ public class EnrollmentService {
     }
 
     @Transactional
-    public AuthenticatorSecretsDTO startReplacement(StartOperationBody body, HttpServletRequest request,
-            HttpServletResponse response) {
+    public AuthenticatorSecretsDTO startReplacement(StartOperationBody body, HttpServletRequest request) {
         SessionService.Current current = sessions.requireHuman(request);
         sessions.requireRecentAuth(current);
         AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
-        UUID operationId = body.operationId() == null ? UUID.randomUUID() : body.operationId();
+        UUID operationId = requireOperationId(body.operationId());
         repository.supersedePendingOperations(account.id(), "AUTHENTICATOR_REPLACEMENT", clock.instant());
-        return createReplacement(account, operationId);
+        return createAuthenticatorOperation(account, "AUTHENTICATOR_REPLACEMENT", operationId);
     }
 
     @Transactional
@@ -187,12 +186,11 @@ public class EnrollmentService {
     }
 
     @Transactional
-    public RecoverySecretsDTO startRegeneration(StartOperationBody body, HttpServletRequest request,
-            HttpServletResponse response) {
+    public RecoverySecretsDTO startRegeneration(StartOperationBody body, HttpServletRequest request) {
         SessionService.Current current = sessions.requireHuman(request);
         sessions.requireRecentAuth(current);
         AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
-        UUID operationId = body.operationId() == null ? UUID.randomUUID() : body.operationId();
+        UUID operationId = requireOperationId(body.operationId());
         Instant now = clock.instant();
         repository.supersedePendingOperations(account.id(), "RECOVERY_CODE_GENERATION", now);
         UUID setId = UUID.randomUUID();
@@ -201,7 +199,7 @@ public class EnrollmentService {
         storeCodes(setId, generated);
         OperationRow operation = new OperationRow(operationId, account.id(), "RECOVERY_CODE_GENERATION", "PENDING",
                 null, setId, now, now.plus(OPERATION_LIFETIME), null, null, null, null, 0);
-        repository.insertOperation(operation);
+        insertOperation(operation);
         return new RecoverySecretsDTO(operation(operation), generated.display());
     }
 
@@ -256,9 +254,8 @@ public class EnrollmentService {
         repository.cancelOperation(operation.id(), clock.instant());
     }
 
-    private AuthenticatorSecretsDTO createEnrollment(AccountRow account, String purpose, UUID operationId) {
+    private AuthenticatorSecretsDTO createAuthenticatorOperation(AccountRow account, String purpose, UUID operationId) {
         Instant now = clock.instant();
-        repository.supersedePendingOperations(account.id(), purpose, now);
         SeedRow seed = createSeed(account, now);
         UUID setId = UUID.randomUUID();
         RecoveryCodes.Generated generated = recoveryCodes.generate();
@@ -266,27 +263,24 @@ public class EnrollmentService {
         storeCodes(setId, generated);
         OperationRow operation = new OperationRow(operationId, account.id(), purpose, "PENDING", seed.id(), setId,
                 now, now.plus(OPERATION_LIFETIME), null, null, null, null, 0);
-        repository.insertOperation(operation);
+        insertOperation(operation);
         String secret = cipher.decrypt(account.id(), seed.id(), seed.keyId(), seed.nonce(), seed.ciphertext());
         String uri = "otpauth://totp/" + ISSUER.replace(" ", "%20") + ":" + account.email()
                 + "?secret=" + secret + "&issuer=" + ISSUER.replace(" ", "%20");
         return new AuthenticatorSecretsDTO(operation(operation), secret, uri, generated.display());
     }
 
-    private AuthenticatorSecretsDTO createReplacement(AccountRow account, UUID operationId) {
-        Instant now = clock.instant();
-        SeedRow seed = createSeed(account, now);
-        UUID setId = UUID.randomUUID();
-        RecoveryCodes.Generated generated = recoveryCodes.generate();
-        repository.insertRecoverySet(new RecoverySetRow(setId, account.id(), "PENDING", now, now.plus(OPERATION_LIFETIME), null, null));
-        storeCodes(setId, generated);
-        OperationRow operation = new OperationRow(operationId, account.id(), "AUTHENTICATOR_REPLACEMENT", "PENDING",
-                seed.id(), setId, now, now.plus(OPERATION_LIFETIME), null, null, null, null, 0);
-        repository.insertOperation(operation);
-        String secret = cipher.decrypt(account.id(), seed.id(), seed.keyId(), seed.nonce(), seed.ciphertext());
-        String uri = "otpauth://totp/" + ISSUER.replace(" ", "%20") + ":" + account.email()
-                + "?secret=" + secret + "&issuer=" + ISSUER.replace(" ", "%20");
-        return new AuthenticatorSecretsDTO(operation(operation), secret, uri, generated.display());
+    private UUID requireOperationId(UUID operationId) {
+        if (operationId == null) {
+            throw APIException.invalid("operationId", "Provide a valid operation ID.");
+        }
+        return operationId;
+    }
+
+    private void insertOperation(OperationRow operation) {
+        if (!repository.insertOperation(operation)) {
+            throw new APIException("STALE_OPERATION", "This setup is no longer current. Start again.");
+        }
     }
 
     private SeedRow createSeed(AccountRow account, Instant now) {
@@ -317,6 +311,9 @@ public class EnrollmentService {
     }
 
     private void verifyCandidate(AccountRow account, SeedRow seed, String code) {
+        if (!totp.hasValidCodeFormat(code)) {
+            throw APIException.invalid("authenticatorCode", "Enter a six-digit authenticator code.");
+        }
         String secret = factors.decryptSeed(account, seed);
         OptionalLong step = totp.verify(secret, code, clock.instant());
         if (step.isEmpty() || !repository.recordTotpStep(account.id(), step.getAsLong(), clock.instant())) {

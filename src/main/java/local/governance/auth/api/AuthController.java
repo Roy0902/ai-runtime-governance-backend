@@ -2,19 +2,27 @@ package local.governance.auth.api;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.UUID;
+import local.governance.api.AuthenticatorSecretsDTO;
+import local.governance.api.CompleteEnrollmentBody;
 import local.governance.api.ContextDTO;
 import local.governance.api.CredentialsBody;
 import local.governance.api.EmailBody;
 import local.governance.api.MailAcceptedDTO;
+import local.governance.api.OperationDTO;
 import local.governance.api.PasswordResetBody;
 import local.governance.api.ReauthenticationBody;
 import local.governance.api.RegistrationBody;
+import local.governance.api.RestartEnrollmentBody;
 import local.governance.api.SignInBody;
+import local.governance.api.StartOperationBody;
 import local.governance.api.TokenBody;
 import local.governance.auth.application.AuthService;
+import local.governance.auth.application.EnrollmentService;
 import local.governance.auth.session.SessionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,10 +34,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final AuthService auth;
+    private final EnrollmentService enrollment;
     private final SessionService sessions;
 
-    public AuthController(AuthService auth, SessionService sessions) {
+    public AuthController(AuthService auth, EnrollmentService enrollment, SessionService sessions) {
         this.auth = auth;
+        this.enrollment = enrollment;
         this.sessions = sessions;
     }
 
@@ -98,5 +108,32 @@ public class AuthController {
     public ContextDTO reauthenticate(@RequestBody ReauthenticationBody body, HttpServletRequest request) {
         sessions.requireCsrfIfBrowser(request);
         return auth.reauthenticate(body, request);
+    }
+
+    @GetMapping("/enrollment")
+    public OperationDTO readEnrollment(HttpServletRequest request) {
+        return enrollment.readEnrollment(request);
+    }
+
+    @PostMapping("/enrollment")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AuthenticatorSecretsDTO startEnrollment(@RequestBody StartOperationBody body, HttpServletRequest request) {
+        sessions.requireCsrfIfBrowser(request);
+        return enrollment.start(body, request);
+    }
+
+    @PostMapping("/enrollment/restart")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AuthenticatorSecretsDTO restartEnrollment(@RequestBody RestartEnrollmentBody body,
+            HttpServletRequest request) {
+        sessions.requireCsrfIfBrowser(request);
+        return enrollment.restart(body, request);
+    }
+
+    @PostMapping("/enrollment/complete")
+    public ContextDTO completeEnrollment(@RequestBody CompleteEnrollmentBody body, HttpServletRequest request,
+            HttpServletResponse response) {
+        sessions.requireCsrfIfBrowser(request);
+        return enrollment.complete(body, request, response);
     }
 }

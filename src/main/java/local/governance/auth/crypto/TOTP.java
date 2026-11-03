@@ -26,8 +26,12 @@ public class TOTP {
         return instant.getEpochSecond() / STEP_SECONDS;
     }
 
+    public boolean hasValidCodeFormat(String code) {
+        return code != null && code.matches("[0-9]{6}");
+    }
+
     public OptionalLong verify(String secret, String code, Instant instant) {
-        if (code == null || !code.matches("[0-9]{6}")) {
+        if (!hasValidCodeFormat(code)) {
             return OptionalLong.empty();
         }
         long current = step(instant);

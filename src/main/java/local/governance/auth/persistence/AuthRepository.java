@@ -363,15 +363,16 @@ public class AuthRepository {
 
     // --- operations ---
 
-    public void insertOperation(OperationRow row) {
-        jdbc.sql("""
+    public boolean insertOperation(OperationRow row) {
+        return jdbc.sql("""
                 INSERT INTO enrollment_operation (id, account_id, purpose, state, candidate_seed_id, recovery_set_id,
                     created_at, expires_at, version)
                 VALUES (:id, :account, :purpose, 'PENDING', :seed, :set, :created, :expires, 0)
+                ON CONFLICT DO NOTHING
                 """)
                 .param("id", row.id()).param("account", row.accountId()).param("purpose", row.purpose())
                 .param("seed", row.candidateSeedId()).param("set", row.recoverySetId())
-                .param("created", ts(row.createdAt())).param("expires", ts(row.expiresAt())).update();
+                .param("created", ts(row.createdAt())).param("expires", ts(row.expiresAt())).update() == 1;
     }
 
     public Optional<OperationRow> operationById(UUID id) {
