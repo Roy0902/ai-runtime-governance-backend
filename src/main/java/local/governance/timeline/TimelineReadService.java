@@ -15,6 +15,7 @@ import local.governance.api.TraceSummaryResponse;
 import local.governance.authentication.persistence.AuthenticationRepository;
 import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
 import local.governance.authentication.session.SessionService;
+import local.governance.config.TestFaultRegistry;
 import local.governance.timeline.TimelineRepository.EventRow;
 import local.governance.timeline.TimelineRepository.TraceRow;
 import org.springframework.stereotype.Service;
@@ -28,17 +29,21 @@ public class TimelineReadService {
     private final SessionService sessions;
     private final AuthenticationRepository accounts;
     private final TimelineRepository timeline;
+    private final TestFaultRegistry faults;
 
     public TimelineReadService(
             SessionService sessions,
             AuthenticationRepository accounts,
-            TimelineRepository timeline) {
+            TimelineRepository timeline,
+            TestFaultRegistry faults) {
         this.sessions = sessions;
         this.accounts = accounts;
         this.timeline = timeline;
+        this.faults = faults;
     }
 
     public TracePageResponse traces(HttpServletRequest request, String cursor) {
+        failIfInjected();
         UUID scope = scope(request);
         TimelineCursor after = TimelineCursor.decode(cursor, scope);
         List<TraceRow> rows = after == null
@@ -55,12 +60,14 @@ public class TimelineReadService {
     }
 
     public TraceDetailResponse trace(HttpServletRequest request, String rawTraceId) {
+        failIfInjected();
         UUID scope = scope(request);
         TraceRow row = timeline.trace(scope, traceId(rawTraceId)).orElseThrow(APIException::notFound);
         return detail(row);
     }
 
     public EventPageResponse events(HttpServletRequest request, String rawTraceId, String cursor) {
+        failIfInjected();
         UUID scope = scope(request);
         UUID traceId = traceId(rawTraceId);
         timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
@@ -76,6 +83,12 @@ public class TimelineReadService {
             nextCursor = TimelineCursor.encode(scope, last.receivedAt(), last.id());
         }
         return new EventPageResponse(page.stream().map(TimelineReadService::event).toList(), nextCursor);
+    }
+
+    private void failIfInjected() {
+        if (faults.enabled("timeline-read")) {
+            throw APIException.unavailable();
+        }
     }
 
     private UUID scope(HttpServletRequest request) {
