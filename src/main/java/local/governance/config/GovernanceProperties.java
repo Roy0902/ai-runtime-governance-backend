@@ -11,6 +11,7 @@ public class GovernanceProperties {
     private AdminProperties admin = new AdminProperties();
     private String trustedProxies = "";
     private TestControlProperties testControl = new TestControlProperties();
+    private TimelineProperties timeline = new TimelineProperties();
 
     public String getBaseUrl() {
         return baseUrl;
@@ -49,6 +50,44 @@ public class GovernanceProperties {
 
     public void setTestControl(TestControlProperties testControl) {
         this.testControl = testControl;
+    }
+
+    public TimelineProperties getTimeline() {
+        return timeline;
+    }
+
+    public void setTimeline(TimelineProperties timeline) {
+        this.timeline = timeline;
+    }
+
+    public static class TimelineProperties {
+        private int maxMembers = 10_000;
+        private int maxActive = 5;
+        private int ttlSeconds = 300;
+
+        public int getMaxMembers() {
+            return maxMembers;
+        }
+
+        public void setMaxMembers(int maxMembers) {
+            this.maxMembers = maxMembers;
+        }
+
+        public int getMaxActive() {
+            return maxActive;
+        }
+
+        public void setMaxActive(int maxActive) {
+            this.maxActive = maxActive;
+        }
+
+        public int getTtlSeconds() {
+            return ttlSeconds;
+        }
+
+        public void setTtlSeconds(int ttlSeconds) {
+            this.ttlSeconds = ttlSeconds;
+        }
     }
 
     public static class AdminProperties {

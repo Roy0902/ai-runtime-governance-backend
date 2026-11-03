@@ -1,6 +1,7 @@
 package local.governance.api;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -16,4 +17,5 @@ public record ActivityEventResponse(
         Instant sourceAt,
         Integer durationMs,
         String identity,
-        EventMetadataResponse metadata) {}
+        EventMetadataResponse metadata,
+        @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean tombstone) {}

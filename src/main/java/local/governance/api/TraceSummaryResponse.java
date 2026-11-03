@@ -1,6 +1,7 @@
 package local.governance.api;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -10,4 +11,5 @@ public record TraceSummaryResponse(
         Instant receivedAt,
         String executionStatus,
         String telemetryStatus,
-        String guardOutcome) {}
+        String guardOutcome,
+        @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean tombstone) {}

@@ -1,5 +1,6 @@
 package local.governance.timeline.test;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -31,14 +32,17 @@ public class TimelineTestController {
     private final TimelineRepository timeline;
     private final AuthenticationRepository accounts;
     private final GovernanceProperties properties;
+    private final Clock clock;
 
     public TimelineTestController(
             TimelineRepository timeline,
             AuthenticationRepository accounts,
-            GovernanceProperties properties) {
+            GovernanceProperties properties,
+            Clock clock) {
         this.timeline = timeline;
         this.accounts = accounts;
         this.properties = properties;
+        this.clock = clock;
     }
 
     @PostMapping("/seed")
@@ -50,12 +54,7 @@ public class TimelineTestController {
         if (body.accountEmail() == null || body.traces() == null) {
             throw APIException.invalid("traces", "Provide an account email and traces.");
         }
-        AccountRow account = accounts.accountByEmail(body.accountEmail())
-                .orElseThrow(() -> APIException.invalid("accountEmail", "Unknown test account."));
-        UUID scope = account.scopeId();
-        if (scope == null) {
-            throw APIException.invalid("accountEmail", "Account has no private scope.");
-        }
+        UUID scope = scope(body.accountEmail());
 
         int traces = 0;
         int events = 0;
@@ -83,32 +82,112 @@ public class TimelineTestController {
                 continue;
             }
             for (SeedEvent event : trace.events()) {
-                if (event.eventId() == null || event.receivedAt() == null || !KINDS.contains(event.kind())) {
-                    throw APIException.invalid("events", "Each event needs a supported kind, id and receipt time.");
-                }
-                timeline.insertEvent(new EventRow(
-                        event.eventId(),
-                        trace.traceId(),
-                        scope,
-                        event.parentEventId(),
-                        false,
-                        event.kind(),
-                        event.receivedAt(),
-                        event.sourceAt(),
-                        event.durationMs(),
-                        event.identity(),
-                        event.label(),
-                        event.guardOutcome(),
-                        event.policyId(),
-                        event.policyVersion(),
-                        event.ruleIds() == null ? List.of() : event.ruleIds(),
-                        event.approvalId(),
-                        event.approvalState(),
-                        event.observedStatus()));
+                insertEvent(scope, trace.traceId(), event);
                 events += 1;
             }
         }
         return Map.of("seededTraces", traces, "seededEvents", events);
+    }
+
+    private void insertEvent(UUID scope, UUID traceId, SeedEvent event) {
+        if (event.eventId() == null || event.receivedAt() == null || !KINDS.contains(event.kind())) {
+            throw APIException.invalid("events", "Each event needs a supported kind, id and receipt time.");
+        }
+        timeline.insertEvent(new EventRow(
+                event.eventId(),
+                traceId,
+                scope,
+                event.parentEventId(),
+                false,
+                event.kind(),
+                event.receivedAt(),
+                event.sourceAt(),
+                event.durationMs(),
+                event.identity(),
+                event.label(),
+                event.guardOutcome(),
+                event.policyId(),
+                event.policyVersion(),
+                event.ruleIds() == null ? List.of() : event.ruleIds(),
+                event.approvalId(),
+                event.approvalState(),
+                event.observedStatus()));
+    }
+
+    private UUID scope(String email) {
+        AccountRow account = accounts.accountByEmail(email)
+                .orElseThrow(() -> APIException.invalid("accountEmail", "Unknown test account."));
+        UUID scope = account.scopeId();
+        if (scope == null) {
+            throw APIException.invalid("accountEmail", "Account has no private scope.");
+        }
+        return scope;
+    }
+
+    @PostMapping("/seed-events")
+    @Transactional
+    public Map<String, Object> seedEvents(
+            @RequestHeader(value = "X-Test-Token", required = false) String token,
+            @RequestBody SeedEventsRequest body) {
+        check(token);
+        UUID scope = scope(body.accountEmail());
+        if (body.traceId() == null || timeline.trace(scope, body.traceId()).isEmpty()) {
+            throw APIException.invalid("traceId", "Unknown trace.");
+        }
+        int seeded = 0;
+        for (SeedEvent event : body.events() == null ? List.<SeedEvent>of() : body.events()) {
+            insertEvent(scope, body.traceId(), event);
+            seeded += 1;
+        }
+        return Map.of("seededEvents", seeded);
+    }
+
+    @PostMapping("/bulk-traces")
+    @Transactional
+    public Map<String, Object> bulkTraces(
+            @RequestHeader(value = "X-Test-Token", required = false) String token,
+            @RequestBody BulkTracesRequest body) {
+        check(token);
+        UUID scope = scope(body.accountEmail());
+        int count = body.count() == null ? 0 : body.count();
+        if (count < 1 || count > 20_000) {
+            throw APIException.invalid("count", "Use a count between 1 and 20000.");
+        }
+        timeline.bulkTraces(scope, count, clock.instant());
+        return Map.of("seededTraces", count);
+    }
+
+    @PostMapping("/bulk-events")
+    @Transactional
+    public Map<String, Object> bulkEvents(
+            @RequestHeader(value = "X-Test-Token", required = false) String token,
+            @RequestBody BulkEventsRequest body) {
+        check(token);
+        UUID scope = scope(body.accountEmail());
+        if (body.traceId() == null || timeline.trace(scope, body.traceId()).isEmpty()) {
+            throw APIException.invalid("traceId", "Unknown trace.");
+        }
+        int count = body.count() == null ? 0 : body.count();
+        if (count < 1 || count > 20_000) {
+            throw APIException.invalid("count", "Use a count between 1 and 20000.");
+        }
+        timeline.bulkEvents(scope, body.traceId(), count, clock.instant());
+        return Map.of("seededEvents", count);
+    }
+
+    @PostMapping("/delete")
+    @Transactional
+    public Map<String, Object> delete(
+            @RequestHeader(value = "X-Test-Token", required = false) String token,
+            @RequestBody DeleteRequest body) {
+        check(token);
+        if (body.traceId() != null) {
+            timeline.deleteTrace(body.traceId());
+        }
+        if (body.eventId() != null) {
+            timeline.deleteEvent(body.eventId());
+        }
+        return Map.of("deleted", true);
     }
 
     @PostMapping("/reset")
@@ -132,6 +211,14 @@ public class TimelineTestController {
     }
 
     public record SeedRequest(String accountEmail, List<SeedTrace> traces) {}
+
+    public record SeedEventsRequest(String accountEmail, UUID traceId, List<SeedEvent> events) {}
+
+    public record BulkTracesRequest(String accountEmail, Integer count) {}
+
+    public record BulkEventsRequest(String accountEmail, UUID traceId, Integer count) {}
+
+    public record DeleteRequest(UUID traceId, UUID eventId) {}
 
     public record SeedTrace(
             UUID traceId,

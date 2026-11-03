@@ -20,6 +20,9 @@ public class APIException extends RuntimeException {
             Map.entry("LINK_NOT_USABLE", HttpStatus.GONE),
             Map.entry("OPERATION_EXPIRED", HttpStatus.GONE),
             Map.entry("RATE_LIMITED", HttpStatus.TOO_MANY_REQUESTS),
+            Map.entry("TRAVERSAL_LIMIT", HttpStatus.TOO_MANY_REQUESTS),
+            Map.entry("TRAVERSAL_TOO_LARGE", HttpStatus.UNPROCESSABLE_ENTITY),
+            Map.entry("TRAVERSAL_EXPIRED", HttpStatus.GONE),
             Map.entry("TEMPORARILY_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE),
             Map.entry("INTERNAL_ERROR", HttpStatus.INTERNAL_SERVER_ERROR));
 
@@ -85,5 +88,18 @@ public class APIException extends RuntimeException {
 
     public static APIException rateLimited(int retryAfterSeconds) {
         return new APIException("RATE_LIMITED", "Too many attempts. Try again shortly.", retryAfterSeconds);
+    }
+
+    public static APIException traversalExpired() {
+        return new APIException("TRAVERSAL_EXPIRED", "This activity view expired. Refresh and try again.");
+    }
+
+    public static APIException traversalLimit(int retryAfterSeconds) {
+        return new APIException("TRAVERSAL_LIMIT", "Too many activity views are open. Try again shortly.",
+                retryAfterSeconds);
+    }
+
+    public static APIException traversalTooLarge() {
+        return new APIException("TRAVERSAL_TOO_LARGE", "This activity is too large to page. Narrow the view.");
     }
 }

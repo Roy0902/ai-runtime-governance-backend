@@ -57,6 +57,15 @@ public class TimelineRepository {
             String approvalState,
             String observedStatus) {}
 
+    public record TraversalRow(
+            UUID id,
+            UUID scopeId,
+            String kind,
+            UUID traceId,
+            List<UUID> memberIds,
+            Instant createdAt,
+            Instant expiresAt) {}
+
     public List<TraceRow> traces(UUID scopeId, int limit) {
         return jdbc.sql("""
                 SELECT * FROM activity_trace
@@ -199,7 +208,171 @@ public class TimelineRepository {
                 .update();
     }
 
+    public List<UUID> traceIds(UUID scopeId, int limit) {
+        return jdbc.sql("""
+                SELECT id FROM activity_trace
+                WHERE scope_id = :scope
+                ORDER BY received_at DESC, id DESC
+                LIMIT :limit
+                """)
+                .param("scope", scopeId)
+                .param("limit", limit)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
+                .list();
+    }
+
+    public List<UUID> eventIds(UUID scopeId, UUID traceId, int limit) {
+        return jdbc.sql("""
+                SELECT id FROM activity_event
+                WHERE scope_id = :scope AND trace_id = :trace
+                ORDER BY received_at ASC, id ASC
+                LIMIT :limit
+                """)
+                .param("scope", scopeId)
+                .param("trace", traceId)
+                .param("limit", limit)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
+                .list();
+    }
+
+    public List<TraceRow> tracesByIds(UUID scopeId, List<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                SELECT * FROM activity_trace
+                WHERE scope_id = :scope AND id IN (:ids)
+                """)
+                .param("scope", scopeId)
+                .param("ids", ids)
+                .query(TimelineRepository::mapTrace)
+                .list();
+    }
+
+    public List<EventRow> eventsByIds(UUID scopeId, UUID traceId, List<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                SELECT e.*, (p.id IS NOT NULL) AS parent_exists
+                FROM activity_event e
+                LEFT JOIN activity_event p
+                  ON p.id = e.parent_event_id AND p.trace_id = e.trace_id
+                WHERE e.scope_id = :scope AND e.trace_id = :trace AND e.id IN (:ids)
+                """)
+                .param("scope", scopeId)
+                .param("trace", traceId)
+                .param("ids", ids)
+                .query(TimelineRepository::mapEvent)
+                .list();
+    }
+
+    public void insertTraversal(UUID id, UUID scopeId, String kind, UUID traceId, List<UUID> memberIds,
+            Instant createdAt, Instant expiresAt) {
+        String members = String.join(",", memberIds.stream().map(UUID::toString).toList());
+        jdbc.sql("""
+                INSERT INTO timeline_traversal (
+                    id, scope_id, kind, trace_id, member_ids, created_at, expires_at)
+                VALUES (
+                    :id, :scope, :kind, :trace,
+                    CASE WHEN :members = '' THEN ARRAY[]::uuid[] ELSE string_to_array(:members, ',')::uuid[] END,
+                    :createdAt, :expiresAt)
+                """)
+                .param("id", id)
+                .param("scope", scopeId)
+                .param("kind", kind)
+                .param("trace", traceId)
+                .param("members", members)
+                .param("createdAt", ts(createdAt))
+                .param("expiresAt", ts(expiresAt))
+                .update();
+    }
+
+    public Optional<TraversalRow> traversal(UUID id, UUID scopeId) {
+        return jdbc.sql("""
+                SELECT * FROM timeline_traversal
+                WHERE id = :id AND scope_id = :scope
+                """)
+                .param("id", id)
+                .param("scope", scopeId)
+                .query(TimelineRepository::mapTraversal)
+                .optional();
+    }
+
+    public int activeTraversals(UUID scopeId, Instant now) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM timeline_traversal
+                WHERE scope_id = :scope AND expires_at > :now
+                """)
+                .param("scope", scopeId)
+                .param("now", ts(now))
+                .query((rs, rowNum) -> rs.getInt(1))
+                .single();
+    }
+
+    public Optional<Instant> earliestExpiry(UUID scopeId, Instant now) {
+        return jdbc.sql("""
+                SELECT MIN(expires_at) AS expires_at FROM timeline_traversal
+                WHERE scope_id = :scope AND expires_at > :now
+                """)
+                .param("scope", scopeId)
+                .param("now", ts(now))
+                .query((rs, rowNum) -> instant(rs.getObject("expires_at", OffsetDateTime.class)))
+                .optional();
+    }
+
+    public void deleteExpired(UUID scopeId, Instant now) {
+        jdbc.sql("""
+                DELETE FROM timeline_traversal
+                WHERE scope_id = :scope AND expires_at <= :now
+                """)
+                .param("scope", scopeId)
+                .param("now", ts(now))
+                .update();
+    }
+
+    public void deleteTrace(UUID traceId) {
+        jdbc.sql("DELETE FROM activity_trace WHERE id = :id").param("id", traceId).update();
+    }
+
+    public void deleteEvent(UUID eventId) {
+        jdbc.sql("DELETE FROM activity_event WHERE id = :id").param("id", eventId).update();
+    }
+
+    public void bulkTraces(UUID scopeId, int count, Instant base) {
+        jdbc.sql("""
+                INSERT INTO activity_trace (
+                    id, scope_id, received_at, execution_status, telemetry_status,
+                    input_coverage, response_coverage, tools_coverage)
+                SELECT gen_random_uuid(), :scope,
+                    CAST(:base AS timestamptz) + (g * interval '1 millisecond'),
+                    'completed', 'complete', 'guarded', 'observed', 'observed'
+                FROM generate_series(1, :count) AS g
+                """)
+                .param("scope", scopeId)
+                .param("base", ts(base))
+                .param("count", count)
+                .update();
+    }
+
+    public void bulkEvents(UUID scopeId, UUID traceId, int count, Instant base) {
+        jdbc.sql("""
+                INSERT INTO activity_event (
+                    id, trace_id, scope_id, kind, received_at, identity, label)
+                SELECT gen_random_uuid(), :trace, :scope, 'tool',
+                    CAST(:base AS timestamptz) + (g * interval '1 millisecond'),
+                    'agent-a', 'bulk ' || g
+                FROM generate_series(1, :count) AS g
+                """)
+                .param("trace", traceId)
+                .param("scope", scopeId)
+                .param("base", ts(base))
+                .param("count", count)
+                .update();
+    }
+
     public void deleteAll() {
+        jdbc.sql("DELETE FROM timeline_traversal").update();
         jdbc.sql("DELETE FROM activity_event").update();
         jdbc.sql("DELETE FROM activity_trace").update();
     }
@@ -242,6 +415,31 @@ public class TimelineRepository {
                 rs.getObject("approval_id", UUID.class),
                 rs.getString("approval_state"),
                 rs.getString("observed_status"));
+    }
+
+    private static TraversalRow mapTraversal(ResultSet rs, int rowNum) throws SQLException {
+        return new TraversalRow(
+                rs.getObject("id", UUID.class),
+                rs.getObject("scope_id", UUID.class),
+                rs.getString("kind"),
+                rs.getObject("trace_id", UUID.class),
+                uuidList(rs.getArray("member_ids")),
+                instant(rs.getObject("created_at", OffsetDateTime.class)),
+                instant(rs.getObject("expires_at", OffsetDateTime.class)));
+    }
+
+    private static List<UUID> uuidList(java.sql.Array value) throws SQLException {
+        if (value == null) {
+            return List.of();
+        }
+        Object array = value.getArray();
+        if (array instanceof UUID[] uuids) {
+            return Arrays.asList(uuids);
+        }
+        if (array instanceof Object[] objects) {
+            return Arrays.stream(objects).map((item) -> (UUID) item).toList();
+        }
+        return List.of();
     }
 
     private static List<String> rules(ResultSet rs, String column) throws SQLException {
