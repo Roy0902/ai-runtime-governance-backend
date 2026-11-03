@@ -1,5 +1,6 @@
 package local.governance.timeline.test;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -10,6 +11,7 @@ import local.governance.api.APIException;
 import local.governance.authentication.persistence.AuthenticationRepository;
 import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
 import local.governance.config.GovernanceProperties;
+import local.governance.timeline.ActivityMetadataService;
 import local.governance.timeline.TimelineRepository;
 import local.governance.timeline.TimelineRepository.EventRow;
 import local.governance.timeline.TimelineRepository.TraceRow;
@@ -33,16 +35,19 @@ public class TimelineTestController {
     private final AuthenticationRepository accounts;
     private final GovernanceProperties properties;
     private final Clock clock;
+    private final ActivityMetadataService metadata;
 
     public TimelineTestController(
             TimelineRepository timeline,
             AuthenticationRepository accounts,
             GovernanceProperties properties,
-            Clock clock) {
+            Clock clock,
+            ActivityMetadataService metadata) {
         this.timeline = timeline;
         this.accounts = accounts;
         this.properties = properties;
         this.clock = clock;
+        this.metadata = metadata;
     }
 
     @PostMapping("/seed")
@@ -122,6 +127,17 @@ public class TimelineTestController {
             throw APIException.invalid("accountEmail", "Account has no private scope.");
         }
         return scope;
+    }
+
+    @PostMapping("/ingest")
+    public Map<String, Object> ingest(
+            @RequestHeader(value = "X-Test-Token", required = false) String token,
+            @RequestBody IngestRequest body) {
+        check(token);
+        UUID scope = scope(body.accountEmail());
+        ActivityMetadataService.AcceptResult result =
+                metadata.accept(scope, body.traceId(), body.producer(), body.event());
+        return Map.of("accepted", result.accepted(), "duplicate", result.duplicate());
     }
 
     @PostMapping("/seed-events")
@@ -209,6 +225,13 @@ public class TimelineTestController {
     private static String orDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
     }
+
+    @JsonIgnoreProperties(ignoreUnknown = false)
+    public record IngestRequest(
+            String accountEmail,
+            UUID traceId,
+            String producer,
+            ActivityMetadataService.IngestEvent event) {}
 
     public record SeedRequest(String accountEmail, List<SeedTrace> traces) {}
 

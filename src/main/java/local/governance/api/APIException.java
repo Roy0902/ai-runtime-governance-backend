@@ -16,6 +16,7 @@ public class APIException extends RuntimeException {
             Map.entry("RECENT_AUTH_REQUIRED", HttpStatus.FORBIDDEN),
             Map.entry("NOT_FOUND", HttpStatus.NOT_FOUND),
             Map.entry("STALE_OPERATION", HttpStatus.CONFLICT),
+            Map.entry("EVENT_CONFLICT", HttpStatus.CONFLICT),
             Map.entry("SECRETS_ALREADY_ISSUED", HttpStatus.CONFLICT),
             Map.entry("LINK_NOT_USABLE", HttpStatus.GONE),
             Map.entry("OPERATION_EXPIRED", HttpStatus.GONE),

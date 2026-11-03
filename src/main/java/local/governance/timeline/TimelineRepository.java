@@ -371,6 +371,53 @@ public class TimelineRepository {
                 .update();
     }
 
+    public Optional<String> contentHash(UUID scopeId, UUID eventId) {
+        return jdbc.sql("""
+                SELECT COALESCE(content_hash, '') AS content_hash FROM activity_event
+                WHERE scope_id = :scope AND id = :id
+                """)
+                .param("scope", scopeId)
+                .param("id", eventId)
+                .query(String.class)
+                .optional();
+    }
+
+    public void insertIngestedEvent(EventRow row, String contentHash) {
+        String rules = row.ruleIds() == null ? "" : String.join(",", row.ruleIds());
+        jdbc.sql("""
+                INSERT INTO activity_event (
+                    id, trace_id, scope_id, parent_event_id, kind, received_at,
+                    source_at, duration_ms, identity, label, guard_outcome,
+                    policy_id, policy_version, rule_ids, approval_id,
+                    approval_state, observed_status, content_hash)
+                VALUES (
+                    :id, :trace, :scope, :parent, :kind, :receivedAt,
+                    :sourceAt, :durationMs, :identity, :label, :guardOutcome,
+                    :policyId, :policyVersion,
+                    CASE WHEN :rules = '' THEN ARRAY[]::text[] ELSE string_to_array(:rules, ',') END,
+                    :approvalId, :approvalState, :observedStatus, :contentHash)
+                """)
+                .param("id", row.id())
+                .param("trace", row.traceId())
+                .param("scope", row.scopeId())
+                .param("parent", row.parentEventId())
+                .param("kind", row.kind())
+                .param("receivedAt", ts(row.receivedAt()))
+                .param("sourceAt", ts(row.sourceAt()))
+                .param("durationMs", row.durationMs())
+                .param("identity", row.identity())
+                .param("label", row.label())
+                .param("guardOutcome", row.guardOutcome())
+                .param("policyId", row.policyId())
+                .param("policyVersion", row.policyVersion())
+                .param("rules", rules)
+                .param("approvalId", row.approvalId())
+                .param("approvalState", row.approvalState())
+                .param("observedStatus", row.observedStatus())
+                .param("contentHash", contentHash)
+                .update();
+    }
+
     public void deleteAll() {
         jdbc.sql("DELETE FROM timeline_traversal").update();
         jdbc.sql("DELETE FROM activity_event").update();
