@@ -19,7 +19,7 @@ public class APIErrorHandler {
     private static final Logger log = LoggerFactory.getLogger(APIErrorHandler.class);
 
     @ExceptionHandler(APIException.class)
-    public ResponseEntity<FailureBody> handle(APIException exception, HttpServletRequest request) {
+    public ResponseEntity<FailureResponse> handle(APIException exception, HttpServletRequest request) {
         UUID correlationId = correlationId(request);
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.CACHE_CONTROL, "no-store");
@@ -27,7 +27,7 @@ public class APIErrorHandler {
         if (exception.retryAfterSeconds() != null) {
             headers.set(HttpHeaders.RETRY_AFTER, exception.retryAfterSeconds().toString());
         }
-        FailureBody body = new FailureBody(
+        FailureResponse body = new FailureResponse(
                 exception.code(),
                 exception.getMessage(),
                 correlationId,
@@ -37,16 +37,16 @@ public class APIErrorHandler {
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<FailureBody> malformed(HttpServletRequest request) {
+    public ResponseEntity<FailureResponse> malformed(HttpServletRequest request) {
         return handle(new APIException("REQUEST_INVALID", "Check the request and try again."), request);
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
-    public ResponseEntity<FailureBody> unsupportedMediaType(HttpServletRequest request) {
+    public ResponseEntity<FailureResponse> unsupportedMediaType(HttpServletRequest request) {
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.CACHE_CONTROL, "no-store");
         return new ResponseEntity<>(
-                new FailureBody("REQUEST_INVALID", "Use application/json.", correlationId(request), null, null),
+                new FailureResponse("REQUEST_INVALID", "Use application/json.", correlationId(request), null, null),
                 headers,
                 415);
     }
@@ -57,12 +57,12 @@ public class APIErrorHandler {
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
-    public ResponseEntity<FailureBody> missingRoute(HttpServletRequest request) {
+    public ResponseEntity<FailureResponse> missingRoute(HttpServletRequest request) {
         return handle(new APIException("NOT_FOUND", "We couldn't find that item."), request);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<FailureBody> unexpected(Exception exception, HttpServletRequest request) {
+    public ResponseEntity<FailureResponse> unexpected(Exception exception, HttpServletRequest request) {
         log.error("unhandled request failure", exception);
         return handle(new APIException("INTERNAL_ERROR", "Something went wrong. Try again."), request);
     }

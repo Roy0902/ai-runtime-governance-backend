@@ -1,0 +1,12 @@
+package local.governance.api;
+
+import java.util.List;
+import java.util.UUID;
+
+public record FailureResponse(
+        String code,
+        String message,
+        UUID correlationId,
+        Integer retryAfterSeconds,
+        List<APIException.FieldError> fieldErrors) {
+}

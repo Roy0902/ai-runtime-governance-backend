@@ -1,7 +1,7 @@
 package local.governance;
 
 import java.util.Arrays;
-import local.governance.admin.AdminCLI;
+import local.governance.admin.AdminCommandLineHandler;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -21,7 +21,7 @@ public class GovernanceApplication {
                     "spring.main.banner-mode", "off",
                     "logging.level.root", "ERROR"));
             ConfigurableApplicationContext context = application.run();
-            int exitCode = context.getBean(AdminCLI.class).run(Arrays.copyOfRange(args, 1, args.length));
+            int exitCode = context.getBean(AdminCommandLineHandler.class).run(Arrays.copyOfRange(args, 1, args.length));
             context.close();
             System.exit(exitCode);
         }

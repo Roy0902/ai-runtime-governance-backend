@@ -5,23 +5,23 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import local.governance.auth.persistence.AuthRepository;
-import local.governance.auth.persistence.AuthRepository.AccountRow;
-import local.governance.auth.persistence.AuthRepository.OperationRow;
-import local.governance.config.DispatchState;
-import local.governance.config.TestFaults;
+import local.governance.authentication.persistence.AuthenticationRepository;
+import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
+import local.governance.authentication.persistence.AuthenticationRepository.OperationRow;
+import local.governance.config.DispatchStateStore;
+import local.governance.config.TestFaultRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AdminService {
 
-    private final AuthRepository repository;
-    private final DispatchState dispatchState;
-    private final TestFaults faults;
+    private final AuthenticationRepository repository;
+    private final DispatchStateStore dispatchState;
+    private final TestFaultRegistry faults;
     private final Clock clock;
 
-    public AdminService(AuthRepository repository, DispatchState dispatchState, TestFaults faults, Clock clock) {
+    public AdminService(AuthenticationRepository repository, DispatchStateStore dispatchState, TestFaultRegistry faults, Clock clock) {
         this.repository = repository;
         this.dispatchState = dispatchState;
         this.faults = faults;

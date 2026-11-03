@@ -8,9 +8,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class GovernanceProperties {
 
     private String baseUrl = "http://127.0.0.1:5173";
-    private Admin admin = new Admin();
+    private AdminProperties admin = new AdminProperties();
     private String trustedProxies = "";
-    private TestControl testControl = new TestControl();
+    private TestControlProperties testControl = new TestControlProperties();
 
     public String getBaseUrl() {
         return baseUrl;
@@ -20,11 +20,11 @@ public class GovernanceProperties {
         this.baseUrl = baseUrl;
     }
 
-    public Admin getAdmin() {
+    public AdminProperties getAdmin() {
         return admin;
     }
 
-    public void setAdmin(Admin admin) {
+    public void setAdmin(AdminProperties admin) {
         this.admin = admin;
     }
 
@@ -43,15 +43,15 @@ public class GovernanceProperties {
         return Arrays.stream(trustedProxies.split(",")).map(String::trim).filter((s) -> !s.isEmpty()).toList();
     }
 
-    public TestControl getTestControl() {
+    public TestControlProperties getTestControl() {
         return testControl;
     }
 
-    public void setTestControl(TestControl testControl) {
+    public void setTestControl(TestControlProperties testControl) {
         this.testControl = testControl;
     }
 
-    public static class Admin {
+    public static class AdminProperties {
         private String allowedOsUsers = "";
 
         public String getAllowedOsUsers() {
@@ -70,7 +70,7 @@ public class GovernanceProperties {
         }
     }
 
-    public static class TestControl {
+    public static class TestControlProperties {
         private boolean enabled;
         private String token = "";
         private String clockFile = "";

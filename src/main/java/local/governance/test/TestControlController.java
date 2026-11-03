@@ -12,17 +12,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import local.governance.api.APIException;
-import local.governance.auth.crypto.HashWorkLimiter;
-import local.governance.auth.crypto.Passwords;
-import local.governance.auth.mail.MailWorker;
-import local.governance.auth.persistence.AuthRepository;
-import local.governance.auth.persistence.AuthRepository.AccountRow;
-import local.governance.auth.persistence.AuthRepository.MailRow;
-import local.governance.config.DispatchState;
-import local.governance.config.EvidenceState;
+import local.governance.authentication.crypto.HashWorkLimiter;
+import local.governance.authentication.crypto.PasswordHashService;
+import local.governance.authentication.mail.MailWorker;
+import local.governance.authentication.persistence.AuthenticationRepository;
+import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
+import local.governance.authentication.persistence.AuthenticationRepository.MailRow;
+import local.governance.config.DispatchStateStore;
+import local.governance.config.EvidenceMetadataExporter;
 import local.governance.config.GovernanceProperties;
 import local.governance.config.MutableClock;
-import local.governance.config.TestFaults;
+import local.governance.config.TestFaultRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,24 +39,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class TestControlController {
 
     private final Clock clock;
-    private final AuthRepository repository;
-    private final TestFaults faults;
+    private final AuthenticationRepository repository;
+    private final TestFaultRegistry faults;
     private final MailWorker mailWorker;
-    private final DispatchState dispatchState;
-    private final EvidenceState evidenceState;
+    private final DispatchStateStore dispatchState;
+    private final EvidenceMetadataExporter evidenceState;
     private final HashWorkLimiter hashLimiter;
-    private final Passwords passwords;
+    private final PasswordHashService passwords;
     private final GovernanceProperties properties;
 
     public TestControlController(
             Clock clock,
-            AuthRepository repository,
-            TestFaults faults,
+            AuthenticationRepository repository,
+            TestFaultRegistry faults,
             MailWorker mailWorker,
-            DispatchState dispatchState,
-            EvidenceState evidenceState,
+            DispatchStateStore dispatchState,
+            EvidenceMetadataExporter evidenceState,
             HashWorkLimiter hashLimiter,
-            Passwords passwords,
+            PasswordHashService passwords,
             GovernanceProperties properties) {
         this.clock = clock;
         this.repository = repository;
@@ -103,14 +103,14 @@ public class TestControlController {
             @RequestHeader(value = "X-Test-Token", required = false) String token,
             @RequestBody Map<String, Object> body) {
         check(token);
-        String email = local.governance.auth.domain.EmailIdentity.normalize(String.valueOf(body.get("email")));
+        String email = local.governance.authentication.domain.EmailPolicy.normalize(String.valueOf(body.get("email")));
         String password = String.valueOf(body.get("password"));
         AccountRow account = repository.accountByEmail(email)
                 .filter(row -> row.emailVerifiedAt() != null
                         && "VERIFIED".equals(row.status())
                         && "ENROLLED".equals(row.mfaState()))
                 .orElseThrow(APIException::signInFailed);
-        if (passwords.verify(password, account.passwordHash()) != Passwords.Verification.CURRENT) {
+        if (passwords.verify(password, account.passwordHash()) != PasswordHashService.Verification.CURRENT) {
             throw APIException.signInFailed();
         }
         String predecessor = hashLimiter.submit(() -> passwords.hashPredecessorForTest(password));
