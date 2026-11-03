@@ -278,15 +278,11 @@ public class TestControlController {
                     && account.updatedAt().isAfter(account.createdAt());
         }
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("algorithm", "argon2id");
-        body.put("version", 19);
-        body.put("memoryKib", 65536);
-        body.put("iterations", 3);
-        body.put("lanes", 1);
+        body.put("algorithm", "pbkdf2-sha256");
+        body.put("iterations", 210000);
         body.put("saltBytes", 16);
         body.put("outputBytes", 32);
-        body.put("predecessorMemoryKib", 19456);
-        body.put("predecessorIterations", 2);
+        body.put("predecessorIterations", 100000);
         body.put("currentPasswordIsResetPassword", changed);
         return body;
     }

@@ -38,6 +38,7 @@ public class HashWorkLimiter {
         if (faults.enabled("hash-service")) {
             throw APIException.unavailable();
         }
+        
         Future<T> future;
         try {
             future = executor.submit(task);
