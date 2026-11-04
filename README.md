@@ -225,6 +225,59 @@ Sessions that use the agent's own provider path instead of the gateway are not
 guarded. They may be monitored only if hooks report their activity, and they must
 be labelled as bypassed rather than guarded.
 
+### Reporting Java hook events
+
+The backend accepts metadata-only events from independent LangChain4j and
+Langfuse integrations. It does not connect one integration to the other, pull
+traces from a Langfuse project, or treat either callback as prompt enforcement.
+Each client hook translates its own callback/span into the event envelope below
+and posts it to that integration's endpoint.
+
+After signing in and completing recent authentication, create one credential
+for each integration:
+
+```text
+POST /api/v1/account/hook-credentials/langchain4j
+POST /api/v1/account/hook-credentials/langfuse
+```
+
+Send `Content-Type: application/json` with the request. The response includes a
+one-time bearer token and that integration's event path. The token is scoped to
+the signed-in account and one integration; it cannot read traces or report as
+the other integration. The API lists credential metadata but never returns a
+token again. Revoke the current credential before issuing its replacement.
+
+Post each event to the returned path with
+`Authorization: Bearer <token>`:
+
+```json
+{
+  "traceId": "c1c6aec4-8c29-4e8d-a730-e3abc7802bef",
+  "event": {
+    "eventId": "2e9b9715-9272-4c87-8fbd-7715c2424839",
+    "kind": "model",
+    "sourceAt": "2026-11-04T08:30:00Z",
+    "durationMs": 420,
+    "identity": "model-alias",
+    "label": "chat",
+    "observedStatus": "completed"
+  }
+}
+```
+
+Supported event kinds are `prompt`, `agent`, `model`, and `tool`. The backend
+assigns receipt time and creates a trace on the first event. A prompt event is
+reported as bypassed, not guarded; model and tool events describe observation
+only. Unknown fields, prompt/model/tool bodies, reasoning, credentials, guard
+decisions, approval facts, and arbitrary attributes are rejected. Send only
+stable metadata such as operation names and status values; identity and label
+values are short identifiers, not free-form text. Langfuse integrations must
+map spans to this envelope; sending raw OTLP or asking the backend to fetch
+Langfuse traces is not supported by this first slice.
+
+Revoke credentials with `DELETE /api/v1/account/hook-credentials/{id}`. Both
+credential creation and revocation require recent reauthentication.
+
 ## Reading a guard result
 
 | Result | What a user should understand |

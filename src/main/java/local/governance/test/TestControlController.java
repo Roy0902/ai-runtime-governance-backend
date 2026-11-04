@@ -23,6 +23,7 @@ import local.governance.config.EvidenceMetadataExporter;
 import local.governance.config.GovernanceProperties;
 import local.governance.config.MutableClock;
 import local.governance.config.TestFaultRegistry;
+import local.governance.integration.HookCredentialRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -47,6 +48,7 @@ public class TestControlController {
     private final HashWorkLimiter hashLimiter;
     private final PasswordHashService passwords;
     private final GovernanceProperties properties;
+    private final HookCredentialRepository hookCredentials;
 
     public TestControlController(
             Clock clock,
@@ -57,7 +59,8 @@ public class TestControlController {
             EvidenceMetadataExporter evidenceState,
             HashWorkLimiter hashLimiter,
             PasswordHashService passwords,
-            GovernanceProperties properties) {
+            GovernanceProperties properties,
+            HookCredentialRepository hookCredentials) {
         this.clock = clock;
         this.repository = repository;
         this.faults = faults;
@@ -67,6 +70,7 @@ public class TestControlController {
         this.hashLimiter = hashLimiter;
         this.passwords = passwords;
         this.properties = properties;
+        this.hookCredentials = hookCredentials;
     }
 
     @PostMapping("/clock")
@@ -130,6 +134,7 @@ public class TestControlController {
     public Map<String, Object> reset(@RequestHeader(value = "X-Test-Token", required = false) String token) {
         check(token);
         repository.resetTestState();
+        hookCredentials.deleteAll();
         faults.clear();
         dispatchState.clear();
         if (clock instanceof MutableClock mutable) {

@@ -15,13 +15,13 @@ import java.util.Set;
 import java.util.UUID;
 import local.governance.api.APIException;
 import local.governance.timeline.TimelineRepository.EventRow;
+import local.governance.timeline.TimelineRepository.TraceRow;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Trusted metadata ingestion for the test-only boundary. It applies the field
- * allowlist, producer authority, duplicate idempotency and conflict rejection
- * before anything is persisted.
+ * Trusted metadata ingestion applies the field allowlist, producer authority,
+ * duplicate idempotency and conflict rejection before anything is persisted.
  */
 @Service
 public class ActivityMetadataService {
@@ -74,7 +74,34 @@ public class ActivityMetadataService {
     public AcceptResult accept(UUID scope, UUID traceId, String producer, IngestEvent event) {
         validate(producer, event);
         timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
+        return persist(scope, traceId, event);
+    }
 
+    @Transactional
+    public AcceptResult acceptFromHook(UUID scope, UUID traceId, String integration, IngestEvent event) {
+        validate("agent_reporter", event);
+        validateHookMetadata(event);
+        Instant receivedAt = clock.instant();
+        timeline.insertTraceIfAbsent(new TraceRow(
+                traceId,
+                scope,
+                receivedAt,
+                "unknown",
+                "unknown",
+                null,
+                integration,
+                "unknown",
+                "unknown",
+                "unknown",
+                null,
+                null,
+                null,
+                null));
+        timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
+        return persist(scope, traceId, event);
+    }
+
+    private AcceptResult persist(UUID scope, UUID traceId, IngestEvent event) {
         String hash = hash(event);
         Optional<String> existing = timeline.contentHash(scope, event.eventId);
         if (existing.isPresent()) {
@@ -104,6 +131,7 @@ public class ActivityMetadataService {
                 event.approvalId,
                 event.approvalState,
                 event.observedStatus), hash);
+        timeline.observeHookCoverage(scope, traceId, event.kind);
         return new AcceptResult(true, false);
     }
 
@@ -111,6 +139,18 @@ public class ActivityMetadataService {
         if (event == null || event.hasUnknown() || event.eventId == null
                 || event.kind == null || !KINDS.contains(event.kind)) {
             throw APIException.invalid("event", "Provide an event id, supported kind and supported fields.");
+        }
+        if (event.durationMs != null && event.durationMs < 0
+                || tooLong(event.identity, 128)
+                || tooLong(event.label, 256)
+                || tooLong(event.policyId, 128)
+                || tooLong(event.policyVersion, 128)
+                || event.ruleIds != null && (event.ruleIds.size() > 32
+                        || event.ruleIds.stream().anyMatch(rule -> rule == null || rule.isBlank() || rule.length() > 128))
+                || !oneOf(event.guardOutcome, "allow", "deny", "redact", "require_approval")
+                || !oneOf(event.approvalState, "requested", "approved", "rejected", "canceled", "expired")
+                || !oneOf(event.observedStatus, "running", "completed", "failed", "canceled", "unknown")) {
+            throw APIException.invalid("event", "Provide valid, bounded event metadata.");
         }
         boolean guardFacts = event.guardOutcome != null
                 || event.policyId != null
@@ -146,6 +186,29 @@ public class ActivityMetadataService {
 
     private static APIException forbidden() {
         return new APIException("FORBIDDEN", "This producer cannot report that event.");
+    }
+
+    private static boolean tooLong(String value, int maxLength) {
+        return value != null && value.length() > maxLength;
+    }
+
+    private static void validateHookMetadata(IngestEvent event) {
+        if (!identifier(event.identity, 128) || !identifier(event.label, 128)) {
+            throw APIException.invalid("event", "Use short metadata identifiers without free-form text.");
+        }
+    }
+
+    private static boolean identifier(String value, int maxLength) {
+        return value == null
+                || value.length() <= maxLength
+                        && value.matches("[A-Za-z0-9][A-Za-z0-9._:/-]*");
+    }
+
+    private static boolean oneOf(String value, String... allowed) {
+        if (value == null) {
+            return true;
+        }
+        return java.util.Arrays.asList(allowed).contains(value);
     }
 
     private static String hash(IngestEvent event) {

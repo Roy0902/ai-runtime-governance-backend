@@ -144,6 +144,15 @@ public class TimelineRepository {
     }
 
     public void insertTrace(TraceRow row) {
+        insertTrace(row, false);
+    }
+
+    public void insertTraceIfAbsent(TraceRow row) {
+        insertTrace(row, true);
+    }
+
+    private void insertTrace(TraceRow row, boolean ignoreExisting) {
+        String conflictClause = ignoreExisting ? " ON CONFLICT (id) DO NOTHING" : "";
         jdbc.sql("""
                 INSERT INTO activity_trace (
                     id, scope_id, received_at, execution_status, telemetry_status,
@@ -155,7 +164,7 @@ public class TimelineRepository {
                     :guardOutcome, :identity, :inputCoverage, :responseCoverage,
                     :toolsCoverage, :lossCauseCode, :lossMissingCount, :lossFrom,
                     :lossTo)
-                """)
+                """ + conflictClause)
                 .param("id", row.id())
                 .param("scope", row.scopeId())
                 .param("receivedAt", ts(row.receivedAt()))
@@ -170,6 +179,20 @@ public class TimelineRepository {
                 .param("lossMissingCount", row.lossMissingCount())
                 .param("lossFrom", ts(row.lossFrom()))
                 .param("lossTo", ts(row.lossTo()))
+                .update();
+    }
+
+    public void observeHookCoverage(UUID scopeId, UUID traceId, String kind) {
+        jdbc.sql("""
+                UPDATE activity_trace
+                SET input_coverage = CASE WHEN :kind = 'prompt' THEN 'bypassed' ELSE input_coverage END,
+                    response_coverage = CASE WHEN :kind = 'model' THEN 'observed' ELSE response_coverage END,
+                    tools_coverage = CASE WHEN :kind = 'tool' THEN 'observed' ELSE tools_coverage END
+                WHERE scope_id = :scope AND id = :trace
+                """)
+                .param("kind", kind)
+                .param("scope", scopeId)
+                .param("trace", traceId)
                 .update();
     }
 
