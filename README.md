@@ -153,6 +153,8 @@ Governance gateway
   -> prompt guard
   -> allow / deny / redact / require approval
   -> model provider
+  -> activity timeline (metadata only)
+  -> Langfuse, optional (redacted prompt + model output)
 
 Supported agent
   | hook and lifecycle events + event credential
@@ -224,6 +226,148 @@ A supported integration connects the agent to the governance service:
 Sessions that use the agent's own provider path instead of the gateway are not
 guarded. They may be monitored only if hooks report their activity, and they must
 be labelled as bypassed rather than guarded.
+
+### Route model traffic through the gateway
+
+The gateway is an OpenAI-compatible endpoint. A signed-in account creates a
+gateway key, then points its agent at the gateway instead of the model provider:
+
+```text
+Agent (OpenCode, VS Code Copilot BYOK, any OpenAI-compatible client)
+  -> POST /v1/chat/completions with an arg_gw_* key
+  -> prompt guard (LangChain4j input guardrail over the built-in catalog)
+  -> allow / redact / deny / require approval
+  -> server-held upstream provider key
+  -> selected OpenAI-compatible provider
+```
+
+The gateway key is separate from hook credentials and from the upstream provider
+key. The provider key never leaves the server.
+
+#### Create a key
+
+Sign in, complete recent authentication, and create a named key:
+
+```text
+POST /api/v1/account/gateway-keys
+Content-Type: application/json
+
+{"name": "laptop"}
+```
+
+The response is the only time the token is shown. It also contains a ready-to-paste
+OpenCode provider block and a VS Code custom-endpoint block. List key metadata
+with `GET /api/v1/account/gateway-keys` and revoke with
+`DELETE /api/v1/account/gateway-keys/{id}`. Key creation and revocation require
+recent reauthentication, like hook credentials.
+
+Creating a key requires `gateway_entitlement = GRANTED`, which a host operator
+grants separately. An account without that entitlement can still sign in, browse
+its own activity, and revoke keys, but gateway authentication returns
+`GATEWAY_NOT_ENTITLED`.
+
+#### Endpoints
+
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/v1/chat/completions` | Guarded OpenAI-compatible chat completion, including SSE streaming |
+| `GET` | `/v1/models` | Models listed by `GOVERNANCE_GATEWAY_MODELS` |
+
+Send the key as `Authorization: Bearer arg_gw_...` or `x-api-key: arg_gw_...`.
+The gateway returns OpenAI-shaped errors such as:
+
+```json
+{"error":{"message":"...","type":"permission_error","param":null,"code":"GUARD_APPROVAL_REQUIRED"}}
+```
+
+#### What the guard does
+
+- The final message must be a plain-text `user` message for a new turn. The guard
+  evaluates that message with the same deterministic detector catalog described
+  above, exposed through a LangChain4j `InputGuardrail`.
+- **Allow** forwards the original bytes unchanged.
+- **Redact** rewrites the submitted message and every earlier user message in the
+  conversation before forwarding. Every forwarded turn also re-checks earlier
+  user messages for redactions, so a secret that appeared in history is not
+  replayed in a later turn, where clients normally resend the original
+  conversation.
+- **Deny** and **require approval** are fail-closed: the gateway records the
+  decision, forwards nothing, and returns `GUARD_DENIED` or
+  `GUARD_APPROVAL_REQUIRED`. The interactive approval UI is a later slice.
+- A guard failure returns `GUARD_EVALUATION_FAILED` and forwards nothing.
+- Tool/assistant continuations are matched to the guarded turn with a conversation
+  fingerprint. Unknown continuations return `GUARD_CONTEXT_UNKNOWN` unless
+  `GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION=true`, which labels the trace
+  `bypassed` and must not be used for guarded deployments.
+
+#### Response handling and limits
+
+- Non-streaming responses are proxied as received.
+- Streaming responses are passed through as SSE chunks without reframing or
+  reordering. The gateway accumulates a bounded copy for telemetry only.
+- Upstream errors are returned with their original status. There is no retry and
+  no fallback to a direct provider.
+- Request body, capture size, concurrent upstream calls, and per-key request rate
+  are bounded by configuration. The rate limiter is per node; a shared store is
+  required before running multiple gateway instances.
+
+#### Langfuse output logging
+
+When enabled, each model call is exported to Langfuse over OTLP/HTTP:
+
+```text
+POST {LANGFUSE_BASE_URL}/api/public/otel/v1/traces
+Authorization: Basic base64(public_key:secret_key)
+x-langfuse-ingestion-version: 4
+```
+
+The exported trace contains the redacted new prompt, the full model output, token
+usage, finish reason, duration, and a `guardrail` child observation with the
+outcome and rule IDs. Continuations of a redacted turn do not re-export the
+prompt. Export is asynchronous and bounded; a Langfuse outage never fails the
+model request or changes the local timeline.
+
+This is an explicit privacy change: the local activity timeline remains
+metadata-only, but Langfuse receives prompt and output content. Disable
+`LANGFUSE_ENABLED` if that is not acceptable for a deployment.
+
+#### Configuration
+
+| Variable | Default | Meaning |
+| :--- | :--- | :--- |
+| `GOVERNANCE_GATEWAY_ENABLED` | `true` | Enable the gateway endpoints |
+| `GOVERNANCE_GATEWAY_PUBLIC_BASE_URL` | request origin | Public base URL used in setup snippets |
+| `GOVERNANCE_UPSTREAM_BASE_URL` | empty | OpenAI-compatible base URL, for example `https://api.openai.com/v1` |
+| `GOVERNANCE_UPSTREAM_API_KEY` | empty | Server-held provider key |
+| `GOVERNANCE_UPSTREAM_ORGANIZATION` | empty | Optional OpenAI organization header |
+| `GOVERNANCE_UPSTREAM_PROJECT` | empty | Optional OpenAI project header |
+| `GOVERNANCE_GATEWAY_MODELS` | empty | Comma-separated model IDs exposed by `/v1/models`; empty allows all models |
+| `GOVERNANCE_GATEWAY_MAX_REQUEST_BYTES` | `2097152` | Maximum request body |
+| `GOVERNANCE_GATEWAY_MAX_CAPTURE_BYTES` | `2097152` | Maximum response copy retained for telemetry |
+| `GOVERNANCE_GATEWAY_MAX_CONCURRENT` | `8` | Maximum in-flight upstream calls |
+| `GOVERNANCE_GATEWAY_REQUESTS_PER_MINUTE` | `60` | Per-key request limit |
+| `GOVERNANCE_GATEWAY_REQUEST_TIMEOUT` | `120` | Upstream request timeout, in seconds |
+| `GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION` | `false` | Development escape hatch; labels the trace bypassed |
+| `LANGFUSE_ENABLED` | `false` | Export model calls to Langfuse |
+| `LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse origin or self-hosted origin |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | empty | Langfuse project keys |
+| `LANGFUSE_CAPTURE_INPUT` / `LANGFUSE_CAPTURE_OUTPUT` | `true` | Include redacted prompt and output content |
+
+#### Current gateway limits
+
+- Only `chat/completions` is supported; the Responses API and Anthropic Messages
+  are later adapters.
+- User content must be a string. Multimodal/array content is rejected with
+  `PROTOCOL_UNSUPPORTED` rather than forwarded unguarded.
+- Approval is fail-closed, not interactive.
+- The conversation fingerprint is a pragmatic correlation key, not a per-turn
+  client contract. Concurrent identical conversations can collide; sending a
+  stable `X-Governance-Conversation-Id` header avoids this.
+- The local timeline records the guard decision and model metadata, not prompt or
+  output bodies. Those exist only in memory and, when enabled, in Langfuse.
+- The built-in catalog currently has no production `DENY` rule; the deny path is
+  implemented and unit-tested but is exercised end to end only after the remaining
+  invalid/weak-prompt catalog slice.
 
 ### Reporting Java hook events
 
@@ -297,8 +441,12 @@ the new human message, not hidden reasoning, later model output, or tool actions
 - Reading another account's trace is rejected without disclosing its metadata.
 - The host operator does not gain trace or prompt access by granting gateway use.
 - Prompt bodies, model outputs, tool payloads, and hidden reasoning are not part
-  of the activity timeline.
-- Secrets are redacted before storage where possible.
+  of the local activity timeline.
+- When Langfuse export is enabled, the redacted submitted prompt and the full
+  model output are sent to the configured Langfuse project. This is the only
+  content-bearing path and is off by default.
+- Secrets are redacted before storage where possible and before forwarding when a
+  redaction rule matches.
 - Authentication, gateway, event-reporting, and provider credentials are
   separate.
 - Guard failure is fail-closed; observation failure is reported as incomplete,
@@ -332,15 +480,16 @@ request expires, the prompt is not forwarded.
 
 ## Scope
 
-The first release covers prompt guarding, metadata-only activity monitoring,
-native accounts with mandatory authenticator 2FA, and the private activity
-timeline.
+The first release now covers the guarded OpenAI-compatible gateway, prompt
+guarding through a LangChain4j input guardrail, metadata-only activity
+monitoring, native accounts with mandatory authenticator 2FA, the private
+activity timeline, and optional Langfuse output logging.
 
 It does not cover:
 
 - private hidden chain-of-thought;
-- prompt or tool payload archives;
-- output-content enforcement;
+- local prompt or tool payload archives (Langfuse export is external and optional);
+- output-content enforcement, buffering, or redaction;
 - per-tool action governance;
 - workspace tenancy or an enterprise role model;
 - universal interception of agents that are not integrated;

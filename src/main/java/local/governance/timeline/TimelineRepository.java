@@ -196,6 +196,27 @@ public class TimelineRepository {
                 .update();
     }
 
+    public void updateTraceCompletion(
+            UUID scopeId,
+            UUID traceId,
+            String executionStatus,
+            String responseCoverage,
+            String toolsCoverage) {
+        jdbc.sql("""
+                UPDATE activity_trace
+                SET execution_status = :executionStatus,
+                    response_coverage = :responseCoverage,
+                    tools_coverage = :toolsCoverage
+                WHERE scope_id = :scope AND id = :trace
+                """)
+                .param("executionStatus", executionStatus)
+                .param("responseCoverage", responseCoverage)
+                .param("toolsCoverage", toolsCoverage)
+                .param("scope", scopeId)
+                .param("trace", traceId)
+                .update();
+    }
+
     public void insertEvent(EventRow row) {
         String rules = row.ruleIds() == null ? "" : String.join(",", row.ruleIds());
         jdbc.sql("""

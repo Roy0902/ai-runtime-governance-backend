@@ -38,3 +38,29 @@ governance:
   test-control:
     enabled: ${GOVERNANCE_TEST_CONTROL:false}
     token: ${GOVERNANCE_TEST_TOKEN:}
+  gateway:
+    enabled: ${GOVERNANCE_GATEWAY_ENABLED:true}
+    public-base-url: ${GOVERNANCE_GATEWAY_PUBLIC_BASE_URL:}
+    upstream-base-url: ${GOVERNANCE_UPSTREAM_BASE_URL:}
+    upstream-api-key: ${GOVERNANCE_UPSTREAM_API_KEY:}
+    upstream-organization: ${GOVERNANCE_UPSTREAM_ORGANIZATION:}
+    upstream-project: ${GOVERNANCE_UPSTREAM_PROJECT:}
+    models: ${GOVERNANCE_GATEWAY_MODELS:}
+    max-active-keys: ${GOVERNANCE_GATEWAY_MAX_KEYS:5}
+    max-request-bytes: ${GOVERNANCE_GATEWAY_MAX_REQUEST_BYTES:2097152}
+    max-capture-bytes: ${GOVERNANCE_GATEWAY_MAX_CAPTURE_BYTES:2097152}
+    max-concurrent-upstream: ${GOVERNANCE_GATEWAY_MAX_CONCURRENT:8}
+    connect-timeout-seconds: ${GOVERNANCE_GATEWAY_CONNECT_TIMEOUT:10}
+    request-timeout-seconds: ${GOVERNANCE_GATEWAY_REQUEST_TIMEOUT:120}
+    conversation-ttl-seconds: ${GOVERNANCE_GATEWAY_CONVERSATION_TTL:3600}
+    requests-per-minute: ${GOVERNANCE_GATEWAY_REQUESTS_PER_MINUTE:60}
+    allow-unguarded-continuation: ${GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION:false}
+  langfuse:
+    enabled: ${LANGFUSE_ENABLED:false}
+    base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
+    public-key: ${LANGFUSE_PUBLIC_KEY:}
+    secret-key: ${LANGFUSE_SECRET_KEY:}
+    capture-input: ${LANGFUSE_CAPTURE_INPUT:true}
+    capture-output: ${LANGFUSE_CAPTURE_OUTPUT:true}
+    queue-capacity: ${LANGFUSE_QUEUE_CAPACITY:1000}
+    timeout-seconds: ${LANGFUSE_TIMEOUT_SECONDS:5}
