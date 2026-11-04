@@ -20,8 +20,8 @@ class GatewayResponseCaptureTest {
 
         assertEquals("hello", result.output());
         assertEquals("stop", result.finishReason());
-        assertEquals(3, result.inputTokens());
-        assertEquals(2, result.outputTokens());
+        assertEquals(3L, result.inputTokens());
+        assertEquals(2L, result.outputTokens());
         assertFalse(result.toolCallObserved());
     }
 
@@ -41,9 +41,53 @@ class GatewayResponseCaptureTest {
         assertTrue(result.output().startsWith("hello"));
         assertTrue(result.output().contains("[tool_calls]"));
         assertEquals("tool_calls", result.finishReason());
-        assertEquals(5, result.inputTokens());
-        assertEquals(4, result.outputTokens());
+        assertEquals(5L, result.inputTokens());
+        assertEquals(4L, result.outputTokens());
         assertTrue(result.toolCallObserved());
+    }
+
+    @Test
+    void capturesProviderMetadataAndDetailedUsage() {
+        GatewayResponseCapture.Capture result = capture.capture(bytes("""
+                {
+                  "id": "chatcmpl-1",
+                  "model": "gpt-4o-2026-01-01",
+                  "system_fingerprint": "fp_1",
+                  "service_tier": "default",
+                  "choices": [{"message": {"content": "ok"},
+                    "finish_reason": "stop"}],
+                  "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                    "prompt_tokens_details": {"cached_tokens": 40},
+                    "completion_tokens_details": {"reasoning_tokens": 5},
+                    "cost": 0.0123
+                  }
+                }
+                """), "application/json", false);
+
+        assertEquals("chatcmpl-1", result.responseId());
+        assertEquals("gpt-4o-2026-01-01", result.responseModel());
+        assertEquals("fp_1", result.systemFingerprint());
+        assertEquals("default", result.serviceTier());
+        assertEquals(120L, result.totalTokens());
+        assertEquals(40L, result.cachedInputTokens());
+        assertEquals(5L, result.reasoningOutputTokens());
+        assertEquals(0.0123, result.providerReportedCostUsd().doubleValue());
+        assertTrue(result.rawUsage().containsKey("prompt_tokens"));
+    }
+
+    @Test
+    void capturesAnUpstreamErrorEnvelope() {
+        GatewayResponseCapture.Capture result = capture.capture(bytes("""
+                {"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit"}}
+                """), "application/json", false);
+
+        assertEquals("rate_limit_error", result.errorType());
+        assertEquals("rate_limit", result.errorCode());
+        assertEquals("rate limited", result.errorMessage());
+        assertEquals("rate limited", result.output());
     }
 
     @Test

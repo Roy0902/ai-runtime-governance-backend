@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.opentelemetry.api.common.AttributeKey;
+import java.math.BigDecimal;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import java.util.List;
@@ -35,6 +36,11 @@ class LangfuseObservationExporterTest {
                 "completed",
                 7,
                 3,
+                2,
+                1,
+                10,
+                new BigDecimal("0.01000000"),
+                new BigDecimal("0.02000000"),
                 "stop",
                 120,
                 "redact"));
@@ -52,6 +58,8 @@ class LangfuseObservationExporterTest {
         assertEquals("the answer", string(generation, "langfuse.observation.output"));
         assertEquals(7L, generation.getAttributes().get(AttributeKey.longKey("gen_ai.usage.input_tokens")));
         assertEquals(3L, generation.getAttributes().get(AttributeKey.longKey("gen_ai.usage.output_tokens")));
+        assertEquals(2L, generation.getAttributes().get(AttributeKey.longKey("gen_ai.usage.cache_read.input_tokens")));
+        assertTrue(string(generation, "langfuse.observation.cost_details").contains("0.02"));
         assertEquals(traceId.toString(), string(generation, "langfuse.trace.metadata.trace_id"));
 
         SpanData guard = span(spans, "prompt-guard");
@@ -68,7 +76,7 @@ class LangfuseObservationExporterTest {
 
         noKeys.export(new GatewayObservationExporter.Observation(
                 UUID.randomUUID(), UUID.randomUUID(), null, "gpt-4o", null, "x",
-                "completed", null, null, null, 1, "allow"));
+                "completed", null, null, null, null, null, null, null, null, 1, "allow"));
         noKeys.shutdown();
 
         assertTrue(inMemory.getFinishedSpanItems().isEmpty());

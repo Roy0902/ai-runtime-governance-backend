@@ -41,6 +41,7 @@ governance:
   gateway:
     enabled: ${GOVERNANCE_GATEWAY_ENABLED:true}
     public-base-url: ${GOVERNANCE_GATEWAY_PUBLIC_BASE_URL:}
+    provider-name: ${GOVERNANCE_GATEWAY_PROVIDER_NAME:openai-compatible}
     upstream-base-url: ${GOVERNANCE_UPSTREAM_BASE_URL:}
     upstream-api-key: ${GOVERNANCE_UPSTREAM_API_KEY:}
     upstream-organization: ${GOVERNANCE_UPSTREAM_ORGANIZATION:}
@@ -55,6 +56,7 @@ governance:
     conversation-ttl-seconds: ${GOVERNANCE_GATEWAY_CONVERSATION_TTL:3600}
     requests-per-minute: ${GOVERNANCE_GATEWAY_REQUESTS_PER_MINUTE:60}
     allow-unguarded-continuation: ${GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION:false}
+    force-stream-usage: ${GOVERNANCE_GATEWAY_FORCE_STREAM_USAGE:false}
   langfuse:
     enabled: ${LANGFUSE_ENABLED:false}
     base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
@@ -64,3 +66,12 @@ governance:
     capture-output: ${LANGFUSE_CAPTURE_OUTPUT:true}
     queue-capacity: ${LANGFUSE_QUEUE_CAPACITY:1000}
     timeout-seconds: ${LANGFUSE_TIMEOUT_SECONDS:5}
+  pricing:
+    models:
+      # Example; add the models your deployment actually uses.
+      # gpt-4o:
+      #   input-per-million: 2.50
+      #   output-per-million: 10.00
+      #   cached-input-per-million: 1.25
+      #   reasoning-output-per-million: 10.00
+      #   currency: USD

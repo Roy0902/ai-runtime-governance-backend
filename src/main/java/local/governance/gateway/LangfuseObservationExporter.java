@@ -156,8 +156,16 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
             span.setAttribute("langfuse.observation.output",
                     truncate(observation.output(), properties.getGateway().getMaxCaptureBytes()));
         }
-        if (observation.inputTokens() != null || observation.outputTokens() != null) {
+        if (observation.inputTokens() != null
+                || observation.outputTokens() != null
+                || observation.cachedInputTokens() != null
+                || observation.reasoningOutputTokens() != null
+                || observation.totalTokens() != null) {
             span.setAttribute("langfuse.observation.usage_details", usage(observation));
+        }
+        if (observation.totalCostUsd() != null) {
+            span.setAttribute("langfuse.observation.cost_details", cost(observation));
+            span.setAttribute("gen_ai.usage.cost", observation.totalCostUsd().doubleValue());
         }
         if (observation.finishReason() != null) {
             span.setAttribute(AttributeKey.stringArrayKey("gen_ai.response.finish_reasons"),
@@ -172,6 +180,17 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
         }
         if (observation.outputTokens() != null) {
             span.setAttribute("gen_ai.usage.output_tokens", observation.outputTokens().longValue());
+        }
+        if (observation.cachedInputTokens() != null) {
+            span.setAttribute("gen_ai.usage.cache_read.input_tokens",
+                    observation.cachedInputTokens().longValue());
+        }
+        if (observation.reasoningOutputTokens() != null) {
+            span.setAttribute("gen_ai.usage.reasoning.output_tokens",
+                    observation.reasoningOutputTokens().longValue());
+        }
+        if (observation.totalTokens() != null) {
+            span.setAttribute("gen_ai.usage.total_tokens", observation.totalTokens().longValue());
         }
     }
 
@@ -205,8 +224,30 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
         if (observation.outputTokens() != null) {
             usage.put("output", observation.outputTokens());
         }
+        if (observation.cachedInputTokens() != null) {
+            usage.put("cached_input", observation.cachedInputTokens());
+        }
+        if (observation.reasoningOutputTokens() != null) {
+            usage.put("reasoning", observation.reasoningOutputTokens());
+        }
+        if (observation.totalTokens() != null) {
+            usage.put("total", observation.totalTokens());
+        }
         try {
             return objectMapper.writeValueAsString(usage);
+        } catch (Exception exception) {
+            return "{}";
+        }
+    }
+
+    private String cost(Observation observation) {
+        Map<String, Object> cost = new LinkedHashMap<>();
+        cost.put("total", observation.totalCostUsd());
+        if (observation.providerReportedCostUsd() != null) {
+            cost.put("provider_reported", observation.providerReportedCostUsd());
+        }
+        try {
+            return objectMapper.writeValueAsString(cost);
         } catch (Exception exception) {
             return "{}";
         }

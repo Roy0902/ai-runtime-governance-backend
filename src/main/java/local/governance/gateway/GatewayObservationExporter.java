@@ -1,5 +1,6 @@
 package local.governance.gateway;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
@@ -19,6 +20,11 @@ public interface GatewayObservationExporter {
             String status,
             Integer inputTokens,
             Integer outputTokens,
+            Integer cachedInputTokens,
+            Integer reasoningOutputTokens,
+            Integer totalTokens,
+            BigDecimal providerReportedCostUsd,
+            BigDecimal totalCostUsd,
             String finishReason,
             long durationMs,
             String guardOutcome) {}

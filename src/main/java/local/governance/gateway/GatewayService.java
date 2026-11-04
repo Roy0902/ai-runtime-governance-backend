@@ -8,7 +8,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import local.governance.api.APIException;
@@ -33,7 +35,10 @@ public class GatewayService {
     private record Prepared(
             UUID traceId,
             UUID scopeId,
+            UUID credentialId,
             String conversationKey,
+            String clientConversationId,
+            String clientUserAgent,
             String model,
             byte[] body,
             boolean stream,
@@ -48,6 +53,8 @@ public class GatewayService {
     private final GatewayTraceRecorder traces;
     private final GatewayUpstreamClient upstream;
     private final GatewayResponseCapture capture;
+    private final GatewayPricing pricing;
+    private final ModelUsageRecorder usage;
     private final GatewayRateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
     private final Optional<GatewayObservationExporter> observationExporter;
@@ -61,6 +68,8 @@ public class GatewayService {
             GatewayTraceRecorder traces,
             GatewayUpstreamClient upstream,
             GatewayResponseCapture capture,
+            GatewayPricing pricing,
+            ModelUsageRecorder usage,
             GatewayRateLimiter rateLimiter,
             ObjectMapper objectMapper,
             Optional<GatewayObservationExporter> observationExporter) {
@@ -72,12 +81,22 @@ public class GatewayService {
         this.traces = traces;
         this.upstream = upstream;
         this.capture = capture;
+        this.pricing = pricing;
+        this.usage = usage;
         this.rateLimiter = rateLimiter;
         this.objectMapper = objectMapper;
         this.observationExporter = observationExporter;
     }
 
     public ProxyResponse exchange(Principal principal, byte[] rawBody, String clientConversationId) {
+        return exchange(principal, rawBody, clientConversationId, null);
+    }
+
+    public ProxyResponse exchange(
+            Principal principal,
+            byte[] rawBody,
+            String clientConversationId,
+            String clientUserAgent) {
         GovernanceProperties.GatewayProperties gateway = properties.getGateway();
         if (!gateway.isEnabled()) {
             throw new APIException("GATEWAY_DISABLED", "The model gateway is disabled.");
@@ -99,7 +118,8 @@ public class GatewayService {
                     "This model is not enabled for the gateway.");
         }
 
-        Prepared prepared = prepare(principal, parsed, rawBody, clientConversationId);
+        Prepared prepared = prepare(
+                principal, parsed, rawBody, clientConversationId, clientUserAgent);
 
         if (!rateLimiter.acquireUpstream()) {
             throw new APIException(
@@ -108,10 +128,13 @@ public class GatewayService {
                     1);
         }
         HttpResponse<InputStream> response;
+        long dispatchStarted = System.nanoTime();
         try {
             response = upstream.sendChatCompletion(prepared.body(), prepared.stream());
         } catch (RuntimeException exception) {
             rateLimiter.releaseUpstream();
+            long durationMs = Math.max(0, (System.nanoTime() - dispatchStarted) / 1_000_000);
+            recordDispatchFailure(prepared, exception, durationMs);
             try {
                 traces.dispatchFailed(prepared.scopeId(), prepared.traceId());
             } catch (RuntimeException traceFailure) {
@@ -122,22 +145,74 @@ public class GatewayService {
         return proxy(prepared, response);
     }
 
+    private void recordDispatchFailure(Prepared prepared, RuntimeException exception, long durationMs) {
+        try {
+            String code = exception instanceof APIException api ? api.code() : "UPSTREAM_UNAVAILABLE";
+            String type = exception instanceof APIException api ? api.status().name() : "UPSTREAM";
+            usage.record(new ModelUsageRecorder.Usage(
+                    prepared.scopeId(),
+                    prepared.traceId(),
+                    prepared.credentialId(),
+                    prepared.conversationKey(),
+                    prepared.clientConversationId(),
+                    prepared.clientUserAgent(),
+                    properties.getGateway().getProviderName(),
+                    prepared.model(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    prepared.stream(),
+                    null,
+                    "failed",
+                    List.of(),
+                    List.of(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    "USD",
+                    prepared.body().length,
+                    null,
+                    false,
+                    (int) Math.min(Integer.MAX_VALUE, durationMs),
+                    null,
+                    type,
+                    code,
+                    truncate(exception.getMessage()),
+                    Map.of(),
+                    Map.of()));
+        } catch (RuntimeException recordFailure) {
+            log.warn("gateway dispatch usage could not be recorded", recordFailure);
+        }
+    }
+
     private Prepared prepare(
             Principal principal,
             Parsed parsed,
             byte[] rawBody,
-            String clientConversationId) {
+            String clientConversationId,
+            String clientUserAgent) {
         if (parsed.mode() == GatewayRequestParser.Mode.NEW_TURN) {
-            return prepareNewTurn(principal, parsed, rawBody, clientConversationId);
+            return prepareNewTurn(
+                    principal, parsed, rawBody, clientConversationId, clientUserAgent);
         }
-        return prepareContinuation(principal, parsed, rawBody, clientConversationId);
+        return prepareContinuation(
+                principal, parsed, rawBody, clientConversationId, clientUserAgent);
     }
 
     private Prepared prepareNewTurn(
             Principal principal,
             Parsed parsed,
             byte[] rawBody,
-            String clientConversationId) {
+            String clientConversationId,
+            String clientUserAgent) {
         GatewayGuardrail.Decision decision = guardrail.evaluate(parsed.userText());
         UUID traceId = UUID.randomUUID();
 
@@ -182,8 +257,9 @@ public class GatewayService {
                     "This prompt requires the submitter's approval before it can be forwarded.");
         }
 
-        byte[] forwardBody = rewrite(
-                parsed.body(), parsed.userMessageIndex(), decision.message(), rawBody);
+        byte[] forwardBody = withStreamUsage(
+                parsed,
+                rewrite(parsed.body(), parsed.userMessageIndex(), decision.message(), rawBody));
         String conversationKey = conversations.key(
                 principal.scopeId(), parsed.model(), parsed.canonicalPrefix(), clientConversationId);
         turnRecorder.recordGuardedTurn(
@@ -199,7 +275,10 @@ public class GatewayService {
         return new Prepared(
                 traceId,
                 principal.scopeId(),
+                principal.credentialId(),
                 conversationKey,
+                clientConversationId,
+                clientUserAgent,
                 parsed.model(),
                 forwardBody,
                 parsed.stream(),
@@ -211,7 +290,8 @@ public class GatewayService {
             Principal principal,
             Parsed parsed,
             byte[] rawBody,
-            String clientConversationId) {
+            String clientConversationId,
+            String clientUserAgent) {
         String conversationKey = conversations.key(
                 principal.scopeId(), parsed.model(), parsed.canonicalPrefix(), clientConversationId);
         Optional<Row> found = conversations.find(principal.scopeId(), conversationKey);
@@ -222,7 +302,10 @@ public class GatewayService {
                 return new Prepared(
                         traceId,
                         principal.scopeId(),
+                        principal.credentialId(),
                         conversationKey,
+                        clientConversationId,
+                        clientUserAgent,
                         parsed.model(),
                         rawBody,
                         parsed.stream(),
@@ -241,11 +324,15 @@ public class GatewayService {
                 conversationKey,
                 conversation.guardedMessageHash(),
                 conversation.guardOutcome());
-        byte[] forwardBody = rewrite(parsed.body(), -1, null, rawBody);
+        byte[] forwardBody = withStreamUsage(
+                parsed, rewrite(parsed.body(), -1, null, rawBody));
         return new Prepared(
                 conversation.traceId(),
                 principal.scopeId(),
+                principal.credentialId(),
                 conversationKey,
+                clientConversationId,
+                clientUserAgent,
                 parsed.model(),
                 forwardBody,
                 parsed.stream(),
@@ -272,33 +359,100 @@ public class GatewayService {
         boolean truncated = false;
         String status = response.statusCode() >= 400 ? "failed" : "completed";
         long started = System.nanoTime();
+        Long firstByteNanos = null;
+        long responseBytes = 0;
 
-        try (InputStream input = response.body()) {
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                output.write(buffer, 0, read);
-                output.flush();
-                if (captured.size() >= maxCapture) {
-                    truncated = true;
-                } else {
-                    int allowed = Math.min(read, maxCapture - captured.size());
-                    captured.write(buffer, 0, allowed);
-                    if (allowed < read) {
+        InputStream bodyStream = response.body();
+        if (bodyStream != null) {
+            try (InputStream input = bodyStream) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    if (firstByteNanos == null) {
+                        firstByteNanos = System.nanoTime();
+                    }
+                    responseBytes += read;
+                    output.write(buffer, 0, read);
+                    output.flush();
+                    if (captured.size() >= maxCapture) {
                         truncated = true;
+                    } else {
+                        int allowed = Math.min(read, maxCapture - captured.size());
+                        captured.write(buffer, 0, allowed);
+                        if (allowed < read) {
+                            truncated = true;
+                        }
                     }
                 }
+            } catch (IOException exception) {
+                status = "canceled";
+            } finally {
+                rateLimiter.releaseUpstream();
             }
-        } catch (IOException exception) {
-            status = "canceled";
-        } finally {
+        } else {
             rateLimiter.releaseUpstream();
         }
 
         GatewayResponseCapture.Capture result =
                 capture.capture(captured.toByteArray(), contentType, truncated);
         long durationMs = Math.max(0, (System.nanoTime() - started) / 1_000_000);
+        Integer ttftMs = firstByteNanos == null
+                ? null
+                : (int) Math.min(Integer.MAX_VALUE, (firstByteNanos - started) / 1_000_000);
         String finalStatus = status;
+
+        String costModel = result.responseModel() == null ? prepared.model() : result.responseModel();
+        GatewayPricing.Cost cost = pricing.calculate(
+                costModel,
+                result.inputTokens(),
+                result.outputTokens(),
+                result.cachedInputTokens(),
+                result.reasoningOutputTokens());
+
+        try {
+            usage.record(new ModelUsageRecorder.Usage(
+                    prepared.scopeId(),
+                    prepared.traceId(),
+                    prepared.credentialId(),
+                    prepared.conversationKey(),
+                    prepared.clientConversationId(),
+                    prepared.clientUserAgent(),
+                    properties.getGateway().getProviderName(),
+                    prepared.model(),
+                    result.responseModel(),
+                    result.responseId(),
+                    result.systemFingerprint(),
+                    result.serviceTier(),
+                    prepared.stream(),
+                    response.statusCode(),
+                    finalStatus,
+                    result.finishReasons(),
+                    result.toolCallNames(),
+                    result.inputTokens(),
+                    result.outputTokens(),
+                    result.cachedInputTokens(),
+                    result.reasoningOutputTokens(),
+                    result.totalTokens(),
+                    result.providerReportedCostUsd(),
+                    cost.inputUsd(),
+                    cost.outputUsd(),
+                    cost.cachedInputUsd(),
+                    cost.totalUsd(),
+                    cost.currency(),
+                    prepared.body().length,
+                    responseBytes,
+                    result.truncated(),
+                    (int) Math.min(Integer.MAX_VALUE, durationMs),
+                    ttftMs,
+                    result.errorType(),
+                    result.errorCode(),
+                    result.errorMessage(),
+                    result.rawUsage(),
+                    safeHeaders(response)));
+        } catch (RuntimeException exception) {
+            log.warn("gateway model usage could not be recorded", exception);
+        }
+
         try {
             traces.complete(
                     prepared.scopeId(),
@@ -320,8 +474,13 @@ public class GatewayService {
                         prepared.prompt(),
                         result.output(),
                         finalStatus,
-                        result.inputTokens(),
-                        result.outputTokens(),
+                        toInteger(result.inputTokens()),
+                        toInteger(result.outputTokens()),
+                        toInteger(result.cachedInputTokens()),
+                        toInteger(result.reasoningOutputTokens()),
+                        toInteger(result.totalTokens()),
+                        result.providerReportedCostUsd(),
+                        cost.totalUsd(),
                         result.finishReason(),
                         durationMs,
                         prepared.guardOutcome()));
@@ -329,6 +488,35 @@ public class GatewayService {
                 log.warn("gateway observation export failed", exception);
             }
         });
+    }
+
+    private static Map<String, String> safeHeaders(HttpResponse<?> response) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        for (String name : List.of(
+                "x-request-id",
+                "openai-processing-ms",
+                "openai-version",
+                "retry-after",
+                "x-ratelimit-limit-requests",
+                "x-ratelimit-remaining-requests",
+                "x-ratelimit-reset-requests",
+                "x-ratelimit-limit-tokens",
+                "x-ratelimit-remaining-tokens",
+                "x-ratelimit-reset-tokens")) {
+            response.headers().firstValue(name).ifPresent(value -> headers.put(name, value));
+        }
+        return headers;
+    }
+
+    private static Integer toInteger(Long value) {
+        return value == null ? null : (int) Math.min(Integer.MAX_VALUE, value);
+    }
+
+    private static String truncate(String value) {
+        if (value == null || value.length() <= 500) {
+            return value;
+        }
+        return value.substring(0, 500);
     }
 
     private HttpHeaders responseHeaders(
@@ -387,6 +575,26 @@ public class GatewayService {
             }
         }
         return changed ? serialise(body) : rawBody;
+    }
+
+    private byte[] withStreamUsage(Parsed parsed, byte[] current) {
+        if (!parsed.stream() || !properties.getGateway().isForceStreamUsage()) {
+            return current;
+        }
+        JsonNode body = parsed.body();
+        JsonNode existing = body.get("stream_options");
+        if (existing != null
+                && existing.isObject()
+                && existing.path("include_usage").asBoolean(false)) {
+            return current;
+        }
+        ObjectNode root = (ObjectNode) body;
+        ObjectNode options = existing != null && existing.isObject()
+                ? (ObjectNode) existing
+                : objectMapper.createObjectNode();
+        options.put("include_usage", true);
+        root.set("stream_options", options);
+        return serialise(root);
     }
 
     private byte[] serialise(JsonNode body) {

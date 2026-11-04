@@ -331,12 +331,73 @@ This is an explicit privacy change: the local activity timeline remains
 metadata-only, but Langfuse receives prompt and output content. Disable
 `LANGFUSE_ENABLED` if that is not acceptable for a deployment.
 
+#### Model usage and cost metadata
+
+Every upstream model call is recorded in `model_usage`, separately from the
+timeline metadata. The stored fields include:
+
+- requested and returned model, provider name, response id, system fingerprint,
+  service tier, stream mode, and HTTP status
+- input, output, cached-input, reasoning-output, and total tokens
+- the raw provider `usage` object and selected provider response headers
+  (request id, processing time, rate-limit headers)
+- finish reasons, tool-call names, request/response byte counts, capture
+  truncation, total duration, and time to first byte
+- computed input/output/cached cost and any provider-reported cost
+- outcome, error type/code/message, account scope, credential id, conversation
+  key, client conversation id, and client user agent
+- Langfuse remains the content store; `model_usage` never stores prompt or
+  output bodies
+
+Read it through:
+
+```text
+GET /api/v1/usage/traces/{traceId}
+GET /api/v1/usage/summary?from=<ISO instant>&to=<ISO instant>
+```
+
+The summary defaults to the last 30 days and returns totals plus breakdowns by
+model and UTC day. The trace detail page shows a **Model usage** panel, and the
+gateway keys page shows a **Last 30 days** usage summary.
+
+Costs are calculated only when a price is configured. Add prices in
+`application.yml` or a deployment-specific configuration file:
+
+```yaml
+governance:
+  pricing:
+    models:
+      gpt-4o:
+        input-per-million: 2.50
+        output-per-million: 10.00
+        cached-input-per-million: 1.25
+        reasoning-output-per-million: 10.00
+        currency: USD
+```
+
+If a model has no configured price, token counts are still stored and the cost
+is shown as "Not priced". Provider credit balances and billing-account spend are
+not queried; only per-call usage reported by the provider is recorded.
+
+For streaming responses, usage is available only when the provider includes it
+in the stream. Some OpenAI-compatible providers require:
+
+```json
+"stream_options": { "include_usage": true }
+```
+
+The gateway can inject that option for streaming requests when
+`GOVERNANCE_GATEWAY_FORCE_STREAM_USAGE=true`. It is off by default because a
+strict provider may reject the extra field; enable it when the selected provider
+supports `stream_options`.
+
 #### Configuration
 
 | Variable | Default | Meaning |
 | :--- | :--- | :--- |
 | `GOVERNANCE_GATEWAY_ENABLED` | `true` | Enable the gateway endpoints |
 | `GOVERNANCE_GATEWAY_PUBLIC_BASE_URL` | request origin | Public base URL used in setup snippets |
+| `GOVERNANCE_GATEWAY_PROVIDER_NAME` | `openai-compatible` | Provider label stored in usage records |
 | `GOVERNANCE_UPSTREAM_BASE_URL` | empty | OpenAI-compatible base URL, for example `https://api.openai.com/v1` |
 | `GOVERNANCE_UPSTREAM_API_KEY` | empty | Server-held provider key |
 | `GOVERNANCE_UPSTREAM_ORGANIZATION` | empty | Optional OpenAI organization header |
@@ -348,6 +409,7 @@ metadata-only, but Langfuse receives prompt and output content. Disable
 | `GOVERNANCE_GATEWAY_REQUESTS_PER_MINUTE` | `60` | Per-key request limit |
 | `GOVERNANCE_GATEWAY_REQUEST_TIMEOUT` | `120` | Upstream request timeout, in seconds |
 | `GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION` | `false` | Development escape hatch; labels the trace bypassed |
+| `GOVERNANCE_GATEWAY_FORCE_STREAM_USAGE` | `false` | Add `stream_options.include_usage` to streaming requests |
 | `LANGFUSE_ENABLED` | `false` | Export model calls to Langfuse |
 | `LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse origin or self-hosted origin |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | empty | Langfuse project keys |

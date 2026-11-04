@@ -53,6 +53,8 @@ class GatewayServiceTest {
     private GatewayTurnRecorder turnRecorder;
     private GatewayTraceRecorder traces;
     private GatewayUpstreamClient upstream;
+    private GatewayPricing pricing;
+    private ModelUsageRecorder usage;
     private GatewayService service;
 
     @BeforeEach
@@ -65,6 +67,10 @@ class GatewayServiceTest {
         turnRecorder = mock(GatewayTurnRecorder.class);
         traces = mock(GatewayTraceRecorder.class);
         upstream = mock(GatewayUpstreamClient.class);
+        pricing = mock(GatewayPricing.class);
+        usage = mock(ModelUsageRecorder.class);
+        when(pricing.calculate(any(), any(), any(), any(), any()))
+                .thenReturn(new GatewayPricing.Cost(null, null, null, null, "USD"));
         when(conversations.key(any(), anyString(), anyString(), any()))
                 .thenReturn("conversation-key");
         when(conversations.messageHash(anyString())).thenReturn("message-hash");
@@ -77,6 +83,8 @@ class GatewayServiceTest {
                 traces,
                 upstream,
                 new GatewayResponseCapture(objectMapper),
+                pricing,
+                usage,
                 new GatewayRateLimiter(properties, Clock.fixed(NOW, ZoneOffset.UTC)),
                 objectMapper,
                 Optional.empty());
@@ -114,6 +122,14 @@ class GatewayServiceTest {
                 eq("message-hash"));
         verify(traces).complete(
                 eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("completed"), eq("stop"), anyInt());
+
+        ArgumentCaptor<ModelUsageRecorder.Usage> recorded =
+                ArgumentCaptor.forClass(ModelUsageRecorder.Usage.class);
+        verify(usage).record(recorded.capture());
+        assertEquals(3L, recorded.getValue().inputTokens());
+        assertEquals(1L, recorded.getValue().outputTokens());
+        assertEquals("stop", recorded.getValue().finishReasons().getFirst());
+        assertEquals("completed", recorded.getValue().outcome());
     }
 
     @Test
@@ -290,6 +306,28 @@ class GatewayServiceTest {
 
         assertEquals("UPSTREAM_UNAVAILABLE", exception.code());
         verify(traces).dispatchFailed(eq(scopeId), any(UUID.class));
+        ArgumentCaptor<ModelUsageRecorder.Usage> recorded =
+                ArgumentCaptor.forClass(ModelUsageRecorder.Usage.class);
+        verify(usage).record(recorded.capture());
+        assertEquals("failed", recorded.getValue().outcome());
+        assertEquals("UPSTREAM_UNAVAILABLE", recorded.getValue().errorCode());
+    }
+
+    @Test
+    void injectsStreamUsageWhenConfigured() throws Exception {
+        properties.getGateway().setForceStreamUsage(true);
+        when(guardrail.evaluate("hello"))
+                .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
+        ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
+        when(upstream.sendChatCompletion(forwarded.capture(), eq(true)))
+                .thenReturn(httpResponse(200, "text/event-stream", "data: [DONE]\n\n"));
+
+        service.exchange(principal, bytes(
+                "{\"model\":\"gpt-4o\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"),
+                null).body().writeTo(new ByteArrayOutputStream());
+
+        JsonNode sent = objectMapper.readTree(forwarded.getValue());
+        assertTrue(sent.path("stream_options").path("include_usage").asBoolean());
     }
 
     @Test

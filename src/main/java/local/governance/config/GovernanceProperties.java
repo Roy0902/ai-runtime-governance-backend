@@ -1,7 +1,10 @@
 package local.governance.config;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "governance")
@@ -14,6 +17,7 @@ public class GovernanceProperties {
     private TimelineProperties timeline = new TimelineProperties();
     private GatewayProperties gateway = new GatewayProperties();
     private LangfuseProperties langfuse = new LangfuseProperties();
+    private PricingProperties pricing = new PricingProperties();
 
     public String getBaseUrl() {
         return baseUrl;
@@ -78,9 +82,78 @@ public class GovernanceProperties {
         this.langfuse = langfuse;
     }
 
+    public PricingProperties getPricing() {
+        return pricing;
+    }
+
+    public void setPricing(PricingProperties pricing) {
+        this.pricing = pricing;
+    }
+
+    public static class PricingProperties {
+        private Map<String, ModelPrice> models = new LinkedHashMap<>();
+
+        public Map<String, ModelPrice> getModels() {
+            return models;
+        }
+
+        public void setModels(Map<String, ModelPrice> models) {
+            this.models = models == null ? new LinkedHashMap<>() : models;
+        }
+    }
+
+    public static class ModelPrice {
+        private BigDecimal inputPerMillion;
+        private BigDecimal outputPerMillion;
+        private BigDecimal cachedInputPerMillion;
+        private BigDecimal reasoningOutputPerMillion;
+        private String currency = "USD";
+
+        public BigDecimal getInputPerMillion() {
+            return inputPerMillion;
+        }
+
+        public void setInputPerMillion(BigDecimal inputPerMillion) {
+            this.inputPerMillion = inputPerMillion;
+        }
+
+        public BigDecimal getOutputPerMillion() {
+            return outputPerMillion;
+        }
+
+        public void setOutputPerMillion(BigDecimal outputPerMillion) {
+            this.outputPerMillion = outputPerMillion;
+        }
+
+        public BigDecimal getCachedInputPerMillion() {
+            return cachedInputPerMillion;
+        }
+
+        public void setCachedInputPerMillion(BigDecimal cachedInputPerMillion) {
+            this.cachedInputPerMillion = cachedInputPerMillion;
+        }
+
+        public BigDecimal getReasoningOutputPerMillion() {
+            return reasoningOutputPerMillion;
+        }
+
+        public void setReasoningOutputPerMillion(BigDecimal reasoningOutputPerMillion) {
+            this.reasoningOutputPerMillion = reasoningOutputPerMillion;
+        }
+
+        public String getCurrency() {
+            return currency;
+        }
+
+        public void setCurrency(String currency) {
+            this.currency = currency == null || currency.isBlank() ? "USD" : currency;
+        }
+    }
+
     public static class GatewayProperties {
         private boolean enabled = true;
         private String publicBaseUrl = "";
+        private String providerName = "openai-compatible";
         private String upstreamBaseUrl = "";
         private String upstreamApiKey = "";
         private String upstreamOrganization = "";
@@ -95,6 +168,7 @@ public class GovernanceProperties {
         private int conversationTtlSeconds = 3_600;
         private int requestsPerMinute = 60;
         private boolean allowUnguardedContinuation = false;
+        private boolean forceStreamUsage = false;
 
         public boolean isEnabled() {
             return enabled;
@@ -110,6 +184,16 @@ public class GovernanceProperties {
 
         public void setPublicBaseUrl(String publicBaseUrl) {
             this.publicBaseUrl = publicBaseUrl;
+        }
+
+        public String getProviderName() {
+            return providerName;
+        }
+
+        public void setProviderName(String providerName) {
+            this.providerName = providerName == null || providerName.isBlank()
+                    ? "openai-compatible"
+                    : providerName;
         }
 
         public String getUpstreamBaseUrl() {
@@ -229,6 +313,14 @@ public class GovernanceProperties {
 
         public void setAllowUnguardedContinuation(boolean allowUnguardedContinuation) {
             this.allowUnguardedContinuation = allowUnguardedContinuation;
+        }
+
+        public boolean isForceStreamUsage() {
+            return forceStreamUsage;
+        }
+
+        public void setForceStreamUsage(boolean forceStreamUsage) {
+            this.forceStreamUsage = forceStreamUsage;
         }
     }
 

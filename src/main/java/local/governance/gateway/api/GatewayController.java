@@ -29,10 +29,14 @@ public class GatewayController {
             @RequestHeader(value = "x-api-key", required = false) String apiKey,
             @RequestHeader(value = "X-Governance-Conversation-Id", required = false)
             String conversationId,
+            @RequestHeader(value = "User-Agent", required = false) String userAgent,
             @RequestBody byte[] body) {
         Principal principal = credentials.authenticate(GatewayTokens.resolve(authorization, apiKey));
-        GatewayService.ProxyResponse response =
-                gateway.exchange(principal, body == null ? new byte[0] : body, conversationId);
+        GatewayService.ProxyResponse response = gateway.exchange(
+                principal,
+                body == null ? new byte[0] : body,
+                conversationId,
+                userAgent);
         return ResponseEntity.status(response.status())
                 .headers(response.headers())
                 .body(response.body());

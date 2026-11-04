@@ -1,26 +1,48 @@
 package local.governance.gateway;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
- * Best-effort reconstruction of a model response for Langfuse and timeline
- * metadata. It never alters the bytes forwarded to the agent.
+ * Best-effort reconstruction of a model response for usage accounting and
+ * Langfuse. It never alters the bytes forwarded to the agent.
  */
 @Component
 public class GatewayResponseCapture {
 
+    private static final int MAX_ERROR_MESSAGE = 500;
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+
     public record Capture(
             String output,
             String finishReason,
-            Integer inputTokens,
-            Integer outputTokens,
+            List<String> finishReasons,
+            Long inputTokens,
+            Long outputTokens,
+            Long cachedInputTokens,
+            Long reasoningOutputTokens,
+            Long totalTokens,
+            BigDecimal providerReportedCostUsd,
+            String responseModel,
+            String responseId,
+            String systemFingerprint,
+            String serviceTier,
+            List<String> toolCallNames,
             boolean toolCallObserved,
-            boolean truncated) {}
+            boolean truncated,
+            Map<String, Object> rawUsage,
+            String errorType,
+            String errorCode,
+            String errorMessage) {}
 
     private final ObjectMapper objectMapper;
 
@@ -30,40 +52,43 @@ public class GatewayResponseCapture {
 
     public Capture capture(byte[] body, String contentType, boolean truncated) {
         String raw = body == null ? "" : new String(body, StandardCharsets.UTF_8);
-        Capture capture = contentType != null && contentType.toLowerCase().contains("text/event-stream")
-                ? captureSse(raw)
-                : captureJson(raw);
-        if (truncated) {
-            String output = (capture.output() == null ? "" : capture.output()) + "\n[truncated]";
-            return new Capture(
-                    output,
-                    capture.finishReason(),
-                    capture.inputTokens(),
-                    capture.outputTokens(),
-                    capture.toolCallObserved(),
-                    true);
+        Accumulator accumulator = new Accumulator();
+        if (contentType != null && contentType.toLowerCase().contains("text/event-stream")) {
+            readSse(raw, accumulator);
+        } else {
+            readJson(raw, accumulator);
         }
-        return capture;
+        return accumulator.toCapture(truncated, raw);
     }
 
-    private Capture captureSse(String raw) {
-        StringBuilder text = new StringBuilder();
-        List<JsonNode> toolCalls = new ArrayList<>();
-        String finishReason = null;
-        Integer inputTokens = null;
-        Integer outputTokens = null;
-        StringBuilder data = new StringBuilder();
+    private void readJson(String raw, Accumulator accumulator) {
+        if (raw.isBlank()) {
+            return;
+        }
+        try {
+            JsonNode response = objectMapper.readTree(raw);
+            common(response, accumulator);
+            JsonNode choices = response.path("choices");
+            if (choices.isArray()) {
+                for (JsonNode choice : choices) {
+                    finish(choice, accumulator);
+                    JsonNode message = choice.path("message");
+                    content(message.path("content"), accumulator);
+                    toolCalls(message.path("tool_calls"), accumulator);
+                }
+            }
+        } catch (Exception exception) {
+            accumulator.fallback = raw;
+        }
+    }
 
+    private void readSse(String raw, Accumulator accumulator) {
+        StringBuilder data = new StringBuilder();
         for (String line : raw.split("\n", -1)) {
             String value = line.stripTrailing();
             if (value.isEmpty()) {
-                if (data.length() > 0) {
-                    Chunk chunk = chunk(data.toString(), text, toolCalls);
-                    finishReason = chunk.finishReason() == null ? finishReason : chunk.finishReason();
-                    inputTokens = chunk.inputTokens() == null ? inputTokens : chunk.inputTokens();
-                    outputTokens = chunk.outputTokens() == null ? outputTokens : chunk.outputTokens();
-                    data.setLength(0);
-                }
+                processEvent(data, accumulator);
+                data.setLength(0);
             } else if (value.startsWith("data:")) {
                 if (data.length() > 0) {
                     data.append('\n');
@@ -71,99 +96,225 @@ public class GatewayResponseCapture {
                 data.append(value.substring(5).stripLeading());
             }
         }
-        if (data.length() > 0) {
-            Chunk chunk = chunk(data.toString(), text, toolCalls);
-            finishReason = chunk.finishReason() == null ? finishReason : chunk.finishReason();
-            inputTokens = chunk.inputTokens() == null ? inputTokens : chunk.inputTokens();
-            outputTokens = chunk.outputTokens() == null ? outputTokens : chunk.outputTokens();
-        }
-
-        return new Capture(
-                output(text, toolCalls),
-                finishReason,
-                inputTokens,
-                outputTokens,
-                !toolCalls.isEmpty(),
-                false);
+        processEvent(data, accumulator);
     }
 
-    private Chunk chunk(String data, StringBuilder text, List<JsonNode> toolCalls) {
-        if (data.isBlank() || "[DONE]".equals(data.trim())) {
-            return new Chunk(null, null, null);
+    private void processEvent(StringBuilder data, Accumulator accumulator) {
+        if (data.length() == 0) {
+            return;
+        }
+        String payload = data.toString().trim();
+        if (payload.isEmpty() || "[DONE]".equals(payload)) {
+            return;
         }
         try {
-            JsonNode event = objectMapper.readTree(data);
-            JsonNode choice = event.path("choices").path(0);
-            String content = choice.path("delta").path("content").isTextual()
-                    ? choice.path("delta").path("content").asText()
-                    : null;
-            if (content != null) {
-                text.append(content);
+            JsonNode event = objectMapper.readTree(payload);
+            common(event, accumulator);
+            JsonNode choices = event.path("choices");
+            if (choices.isArray()) {
+                for (JsonNode choice : choices) {
+                    finish(choice, accumulator);
+                    JsonNode delta = choice.path("delta");
+                    content(delta.path("content"), accumulator);
+                    toolCalls(delta.path("tool_calls"), accumulator);
+                    if (delta.isEmpty()) {
+                        JsonNode message = choice.path("message");
+                        content(message.path("content"), accumulator);
+                        toolCalls(message.path("tool_calls"), accumulator);
+                    }
+                }
             }
-            JsonNode deltaToolCalls = choice.path("delta").path("tool_calls");
-            if (deltaToolCalls.isArray()) {
-                deltaToolCalls.forEach(toolCalls::add);
-            }
-            String finishReason = choice.path("finish_reason").isTextual()
-                    ? choice.path("finish_reason").asText()
-                    : null;
-            JsonNode usage = event.path("usage");
-            return new Chunk(
-                    finishReason,
-                    integer(usage, "prompt_tokens", "input_tokens"),
-                    integer(usage, "completion_tokens", "output_tokens"));
         } catch (Exception exception) {
-            return new Chunk(null, null, null);
+            // Ignore malformed chunks; the response is still forwarded unchanged.
         }
     }
 
-    private Capture captureJson(String raw) {
-        if (raw.isBlank()) {
-            return new Capture("", null, null, null, false, false);
+    private void common(JsonNode event, Accumulator accumulator) {
+        text(event.path("id"), value -> accumulator.responseId = value);
+        text(event.path("model"), value -> accumulator.responseModel = value);
+        text(event.path("system_fingerprint"), value -> accumulator.systemFingerprint = value);
+        text(event.path("service_tier"), value -> accumulator.serviceTier = value);
+        JsonNode usage = event.path("usage");
+        if (usage.isObject() && !usage.isEmpty()) {
+            readUsage(usage, accumulator);
+        }
+        JsonNode error = event.path("error");
+        if (error.isObject()) {
+            text(error.path("type"), value -> accumulator.errorType = value);
+            text(error.path("code"), value -> accumulator.errorCode = value);
+            text(error.path("message"), value -> accumulator.errorMessage = truncate(value));
+        }
+    }
+
+    private void readUsage(JsonNode usage, Accumulator accumulator) {
+        Long input = longValue(usage, "prompt_tokens", "input_tokens");
+        Long output = longValue(usage, "completion_tokens", "output_tokens");
+        Long total = longValue(usage, "total_tokens");
+        Long cached = longValue(usage.path("prompt_tokens_details"), "cached_tokens");
+        if (cached == null) {
+            cached = longValue(usage.path("input_tokens_details"), "cached_tokens");
+        }
+        Long reasoning = longValue(usage.path("completion_tokens_details"), "reasoning_tokens");
+        if (reasoning == null) {
+            reasoning = longValue(usage.path("output_tokens_details"), "reasoning_tokens");
+        }
+        BigDecimal providerCost = decimalValue(usage, "cost", "total_cost");
+        if (providerCost == null) {
+            providerCost = decimalValue(usage.path("cost_details"), "total");
+        }
+
+        if (input != null) {
+            accumulator.inputTokens = input;
+        }
+        if (output != null) {
+            accumulator.outputTokens = output;
+        }
+        if (total != null) {
+            accumulator.totalTokens = total;
+        }
+        if (cached != null) {
+            accumulator.cachedInputTokens = cached;
+        }
+        if (reasoning != null) {
+            accumulator.reasoningOutputTokens = reasoning;
+        }
+        if (providerCost != null) {
+            accumulator.providerReportedCostUsd = providerCost;
         }
         try {
-            JsonNode response = objectMapper.readTree(raw);
-            JsonNode choice = response.path("choices").path(0);
-            String content = choice.path("message").path("content").isTextual()
-                    ? choice.path("message").path("content").asText()
-                    : null;
-            JsonNode toolCalls = choice.path("message").path("tool_calls");
-            JsonNode usage = response.path("usage");
-            return new Capture(
-                    content == null ? raw : content,
-                    choice.path("finish_reason").isTextual()
-                            ? choice.path("finish_reason").asText()
-                            : null,
-                    integer(usage, "prompt_tokens", "input_tokens"),
-                    integer(usage, "completion_tokens", "output_tokens"),
-                    toolCalls.isArray() && !toolCalls.isEmpty(),
-                    false);
+            accumulator.rawUsage = objectMapper.convertValue(usage, MAP_TYPE);
         } catch (Exception exception) {
-            return new Capture(raw, null, null, null, false, false);
+            accumulator.rawUsage = null;
         }
     }
 
-    private static String output(StringBuilder text, List<JsonNode> toolCalls) {
-        if (toolCalls.isEmpty()) {
-            return text.toString();
-        }
-        StringBuilder output = new StringBuilder(text);
-        if (output.length() > 0) {
-            output.append('\n');
-        }
-        output.append("[tool_calls] ").append(toolCalls);
-        return output.toString();
+    private static void finish(JsonNode choice, Accumulator accumulator) {
+        text(choice.path("finish_reason"), accumulator.finishReasons::add);
     }
 
-    private static Integer integer(JsonNode usage, String... names) {
+    private static void content(JsonNode content, Accumulator accumulator) {
+        if (content.isTextual()) {
+            accumulator.text.append(content.asText());
+        }
+    }
+
+    private static void toolCalls(JsonNode toolCalls, Accumulator accumulator) {
+        if (!toolCalls.isArray()) {
+            return;
+        }
+        for (JsonNode toolCall : toolCalls) {
+            String name = string(toolCall.path("function").path("name"));
+            if (name == null) {
+                name = string(toolCall.path("name"));
+            }
+            if (name != null && !name.isBlank()) {
+                accumulator.toolCallNames.add(name);
+            }
+        }
+    }
+
+    private static void text(JsonNode node, java.util.function.Consumer<String> consumer) {
+        if (node.isTextual() && !node.asText().isBlank()) {
+            consumer.accept(node.asText());
+        }
+    }
+
+    private static String string(JsonNode node) {
+        return node.isTextual() ? node.asText() : null;
+    }
+
+    private static Long longValue(JsonNode node, String... names) {
+        if (!node.isObject()) {
+            return null;
+        }
         for (String name : names) {
-            JsonNode value = usage.path(name);
-            if (value.isIntegralNumber()) {
-                return value.asInt();
+            JsonNode value = node.path(name);
+            if (value.isIntegralNumber() || value.isNumber()) {
+                return value.asLong();
             }
         }
         return null;
     }
 
-    private record Chunk(String finishReason, Integer inputTokens, Integer outputTokens) {}
+    private static BigDecimal decimalValue(JsonNode node, String... names) {
+        if (!node.isObject()) {
+            return null;
+        }
+        for (String name : names) {
+            JsonNode value = node.path(name);
+            if (value.isNumber()) {
+                return value.decimalValue();
+            }
+        }
+        return null;
+    }
+
+    private static String truncate(String value) {
+        if (value == null || value.length() <= MAX_ERROR_MESSAGE) {
+            return value;
+        }
+        return value.substring(0, MAX_ERROR_MESSAGE);
+    }
+
+    private static final class Accumulator {
+        private final StringBuilder text = new StringBuilder();
+        private final Set<String> finishReasons = new LinkedHashSet<>();
+        private final Set<String> toolCallNames = new LinkedHashSet<>();
+        private Long inputTokens;
+        private Long outputTokens;
+        private Long cachedInputTokens;
+        private Long reasoningOutputTokens;
+        private Long totalTokens;
+        private BigDecimal providerReportedCostUsd;
+        private String responseModel;
+        private String responseId;
+        private String systemFingerprint;
+        private String serviceTier;
+        private Map<String, Object> rawUsage;
+        private String errorType;
+        private String errorCode;
+        private String errorMessage;
+        private String fallback;
+
+        private Capture toCapture(boolean truncated, String raw) {
+            String output = text.toString();
+            if (output.isEmpty() && fallback != null) {
+                output = fallback;
+            }
+            if (output.isEmpty() && errorMessage != null) {
+                output = errorMessage;
+            }
+            if (!toolCallNames.isEmpty()) {
+                if (!output.isEmpty()) {
+                    output += "\n";
+                }
+                output += "[tool_calls] " + String.join(", ", toolCallNames);
+            }
+            if (truncated) {
+                output += "\n[truncated]";
+            }
+            List<String> reasons = List.copyOf(finishReasons);
+            return new Capture(
+                    output,
+                    reasons.isEmpty() ? null : reasons.getFirst(),
+                    reasons,
+                    inputTokens,
+                    outputTokens,
+                    cachedInputTokens,
+                    reasoningOutputTokens,
+                    totalTokens,
+                    providerReportedCostUsd,
+                    responseModel,
+                    responseId,
+                    systemFingerprint,
+                    serviceTier,
+                    List.copyOf(toolCallNames),
+                    !toolCallNames.isEmpty(),
+                    truncated,
+                    rawUsage == null ? Map.of() : new LinkedHashMap<>(rawUsage),
+                    errorType,
+                    errorCode,
+                    errorMessage);
+        }
+    }
 }

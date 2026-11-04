@@ -1,0 +1,48 @@
+package local.governance.gateway;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+public record ModelUsageRow(
+        UUID id,
+        UUID scopeId,
+        UUID traceId,
+        UUID credentialId,
+        String conversationKey,
+        String clientConversationId,
+        String clientUserAgent,
+        String provider,
+        String requestedModel,
+        String responseModel,
+        String responseId,
+        String systemFingerprint,
+        String serviceTier,
+        boolean stream,
+        Integer statusCode,
+        String outcome,
+        List<String> finishReasons,
+        List<String> toolCallNames,
+        Long inputTokens,
+        Long outputTokens,
+        Long cachedInputTokens,
+        Long reasoningOutputTokens,
+        Long totalTokens,
+        BigDecimal providerReportedCostUsd,
+        BigDecimal inputCostUsd,
+        BigDecimal outputCostUsd,
+        BigDecimal cachedInputCostUsd,
+        BigDecimal totalCostUsd,
+        String currency,
+        Integer requestBytes,
+        Long responseBytes,
+        boolean captureTruncated,
+        Integer durationMs,
+        Integer timeToFirstByteMs,
+        String errorType,
+        String errorCode,
+        String errorMessage,
+        String providerUsageJson,
+        String responseHeadersJson,
+        Instant receivedAt) {}
