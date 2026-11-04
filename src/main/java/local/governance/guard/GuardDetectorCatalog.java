@@ -21,9 +21,18 @@ public final class GuardDetectorCatalog {
             "FX-CARD", true, GuardEffect.REDACT, 20, "[REDACTED_PAYMENT_CARD]");
     private static final GuardRule FINANCIAL = new GuardRule(
             "FX-FINANCIAL", true, GuardEffect.REDACT, 20, "[REDACTED_FINANCIAL_ID]");
+    private static final GuardRule INJECTION = new GuardRule(
+            "FX-INJECTION", true, GuardEffect.REQUIRE_APPROVAL, 0, null);
 
     private static final List<GuardRule> RULES = List.of(
-            EMAIL, PHONE, CREDENTIAL, API_TOKEN, CARD, FINANCIAL);
+            EMAIL, PHONE, CREDENTIAL, API_TOKEN, CARD, FINANCIAL, INJECTION);
+    private static final List<String> INJECTION_INDICATORS = List.of(
+            "ignore previous instructions",
+            "ignore all previous instructions",
+            "ignore prior instructions",
+            "ignore all prior instructions",
+            "reveal system instructions",
+            "reveal developer instructions");
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile(
             "(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\\.[A-Za-z]{2,63}"
@@ -76,6 +85,9 @@ public final class GuardDetectorCatalog {
                 (start, end) -> validLuhn(message.substring(start, end)));
         addMatches(message, IBAN_PATTERN, FINANCIAL, codePointOffsets, findings,
                 (start, end) -> validIban(message.substring(start, end)));
+        if (findings.size() <= GuardDecisionCore.MAX_FINDINGS && containsInjectionIndicator(message)) {
+            findings.add(new GuardFinding(INJECTION.id(), null, null));
+        }
         return List.copyOf(findings);
     }
 
@@ -134,6 +146,27 @@ public final class GuardDetectorCatalog {
 
     private static boolean containedBy(int start, int end, List<Span> spans) {
         return spans.stream().anyMatch(span -> start >= span.start() && end <= span.end());
+    }
+
+    private static boolean containsInjectionIndicator(String message) {
+        for (String phrase : INJECTION_INDICATORS) {
+            int finalStart = message.length() - phrase.length();
+            for (int start = 0; start <= finalStart; start += 1) {
+                if (!message.regionMatches(true, start, phrase, 0, phrase.length())) {
+                    continue;
+                }
+                int end = start + phrase.length();
+                if ((start == 0 || !isWordCharacter(message.codePointBefore(start)))
+                        && (end == message.length() || !isWordCharacter(message.codePointAt(end)))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isWordCharacter(int codePoint) {
+        return Character.isLetterOrDigit(codePoint) || codePoint == '_';
     }
 
     private static int[] codePointOffsets(String message) {

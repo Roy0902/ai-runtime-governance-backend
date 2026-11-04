@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
 class GuardDetectorCatalogTest {
@@ -32,7 +34,7 @@ class GuardDetectorCatalogTest {
 
     @Test
     void failsClosedWhenDetectionExceedsTheFindingLimit() {
-        String message = String.join(" ", java.util.stream.IntStream.range(0, 1_025)
+        String message = String.join(" ", IntStream.range(0, 1_025)
                 .mapToObj(index -> "user" + index + "@example.test")
                 .toList());
 
@@ -40,6 +42,32 @@ class GuardDetectorCatalogTest {
                 GuardResult.GuardFailure.class,
                 catalog.evaluate("policy", "v1", message));
         assertTrue(failure.reasons().contains("FINDING_LIMIT_EXCEEDED"));
+    }
+
+    @Test
+    void acceptsExactlyTheFindingLimitWithoutDroppingRedactions() {
+        String message = String.join(" ", IntStream.range(0, GuardDecisionCore.MAX_FINDINGS)
+                .mapToObj(index -> "user" + index + "@example.test")
+                .toList());
+
+        GuardResult.GuardDecision decision = assertInstanceOf(
+                GuardResult.GuardDecision.class,
+                catalog.evaluate("policy", "v1", message));
+        long markerCount = decision.message().split("\\[REDACTED_EMAIL\\]", -1).length - 1L;
+        assertEquals(GuardOutcome.REDACT, decision.outcome());
+        assertEquals(GuardDecisionCore.MAX_FINDINGS, markerCount);
+    }
+
+    @Test
+    void acceptsExactlyTheUtf8MessageLimit() {
+        String message = "🙂".repeat(GuardDecisionCore.MAX_MESSAGE_BYTES / 4);
+        assertEquals(GuardDecisionCore.MAX_MESSAGE_BYTES, message.getBytes(StandardCharsets.UTF_8).length);
+
+        GuardResult.GuardDecision decision = assertInstanceOf(
+                GuardResult.GuardDecision.class,
+                catalog.evaluate("policy", "v1", message));
+        assertEquals(GuardOutcome.ALLOW, decision.outcome());
+        assertEquals(message, decision.message());
     }
 
     @Test
