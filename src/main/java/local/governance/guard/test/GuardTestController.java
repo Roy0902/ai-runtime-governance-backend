@@ -6,6 +6,7 @@ import java.util.Map;
 import local.governance.api.APIException;
 import local.governance.config.GovernanceProperties;
 import local.governance.guard.GuardDecisionCore;
+import local.governance.guard.GuardDetectorCatalog;
 import local.governance.guard.GuardEffect;
 import local.governance.guard.GuardFinding;
 import local.governance.guard.GuardResult;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class GuardTestController {
 
     private final GuardDecisionCore core = new GuardDecisionCore();
+    private final GuardDetectorCatalog detectorCatalog = new GuardDetectorCatalog(core);
     private final GovernanceProperties properties;
 
     public GuardTestController(GovernanceProperties properties) {
@@ -55,6 +57,18 @@ public class GuardTestController {
 
         GuardResult result = core.evaluate(
                 body.policyId(), body.policyVersion(), body.message(), rules, findings);
+        return response(result);
+    }
+
+    @PostMapping("/detect")
+    public ResponseEntity<?> detect(
+            @RequestHeader(value = "X-Test-Token", required = false) String token,
+            @RequestBody DetectRequest body) {
+        check(token);
+        return response(detectorCatalog.evaluate(body.policyId(), body.policyVersion(), body.message()));
+    }
+
+    private static ResponseEntity<?> response(GuardResult result) {
         if (result instanceof GuardResult.GuardFailure failure) {
             return ResponseEntity.status(422).body(Map.of(
                     "code", "GUARD_EVALUATION_FAILED",
@@ -88,6 +102,11 @@ public class GuardTestController {
             String message,
             List<RuleDto> rules,
             List<FindingDto> findings) {}
+
+    public record DetectRequest(
+            String policyId,
+            String policyVersion,
+            String message) {}
 
     public record RuleDto(
             String id,
