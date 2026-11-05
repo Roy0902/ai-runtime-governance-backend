@@ -55,6 +55,7 @@ class GatewayServiceTest {
     private GatewayUpstreamClient upstream;
     private GatewayPricing pricing;
     private ModelUsageRecorder usage;
+    private GatewayOutputPersistence outputPersistence;
     private GatewayService service;
 
     @BeforeEach
@@ -69,6 +70,7 @@ class GatewayServiceTest {
         upstream = mock(GatewayUpstreamClient.class);
         pricing = mock(GatewayPricing.class);
         usage = mock(ModelUsageRecorder.class);
+        outputPersistence = mock(GatewayOutputPersistence.class);
         when(pricing.calculate(any(), any(), any(), any(), any()))
                 .thenReturn(new GatewayPricing.Cost(null, null, null, null, "USD"));
         when(conversations.key(any(), anyString(), anyString(), any()))
@@ -85,6 +87,7 @@ class GatewayServiceTest {
                 new GatewayResponseCapture(objectMapper),
                 pricing,
                 usage,
+                outputPersistence,
                 new GatewayRateLimiter(properties, Clock.fixed(NOW, ZoneOffset.UTC)),
                 objectMapper,
                 Optional.empty());
@@ -110,6 +113,7 @@ class GatewayServiceTest {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         response.body().writeTo(output);
         assertEquals(responseBody, output.toString(StandardCharsets.UTF_8));
+        runOutputPersistence();
         verify(turnRecorder).recordGuardedTurn(
                 eq(scopeId),
                 any(UUID.class),
@@ -262,6 +266,7 @@ class GatewayServiceTest {
                   {"role":"tool","tool_call_id":"call-1","content":"ok"}
                 ]}
                 """), null).body().writeTo(new ByteArrayOutputStream());
+        runOutputPersistence();
 
         JsonNode sent = objectMapper.readTree(forwarded.getValue());
         assertEquals(
@@ -286,6 +291,7 @@ class GatewayServiceTest {
         assertEquals(429, response.status());
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         response.body().writeTo(output);
+        runOutputPersistence();
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("slow down"));
         verify(traces).complete(
                 eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("failed"), isNull(), anyInt());
@@ -349,6 +355,12 @@ class GatewayServiceTest {
     private static byte[] bytes(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
     }
+
+        private void runOutputPersistence() {
+                ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+                verify(outputPersistence).submit(task.capture());
+                task.getValue().run();
+        }
 
     private static HttpResponse<InputStream> httpResponse(
             int status,

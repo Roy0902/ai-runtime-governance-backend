@@ -55,6 +55,7 @@ public class GatewayService {
     private final GatewayResponseCapture capture;
     private final GatewayPricing pricing;
     private final ModelUsageRecorder usage;
+    private final GatewayOutputPersistence outputPersistence;
     private final GatewayRateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
     private final Optional<GatewayObservationExporter> observationExporter;
@@ -70,6 +71,7 @@ public class GatewayService {
             GatewayResponseCapture capture,
             GatewayPricing pricing,
             ModelUsageRecorder usage,
+            GatewayOutputPersistence outputPersistence,
             GatewayRateLimiter rateLimiter,
             ObjectMapper objectMapper,
             Optional<GatewayObservationExporter> observationExporter) {
@@ -83,6 +85,7 @@ public class GatewayService {
         this.capture = capture;
         this.pricing = pricing;
         this.usage = usage;
+        this.outputPersistence = outputPersistence;
         this.rateLimiter = rateLimiter;
         this.objectMapper = objectMapper;
         this.observationExporter = observationExporter;
@@ -409,8 +412,7 @@ public class GatewayService {
                 result.cachedInputTokens(),
                 result.reasoningOutputTokens());
 
-        try {
-            usage.record(new ModelUsageRecorder.Usage(
+        ModelUsageRecorder.Usage usageRecord = new ModelUsageRecorder.Usage(
                     prepared.scopeId(),
                     prepared.traceId(),
                     prepared.credentialId(),
@@ -448,22 +450,27 @@ public class GatewayService {
                     result.errorCode(),
                     result.errorMessage(),
                     result.rawUsage(),
-                    safeHeaders(response)));
-        } catch (RuntimeException exception) {
-            log.warn("gateway model usage could not be recorded", exception);
-        }
+                    safeHeaders(response));
+        int recordedDurationMs = (int) Math.min(Integer.MAX_VALUE, durationMs);
+        outputPersistence.submit(() -> {
+            try {
+                usage.record(usageRecord);
+            } catch (RuntimeException exception) {
+                log.warn("gateway model usage could not be recorded", exception);
+            }
 
-        try {
-            traces.complete(
-                    prepared.scopeId(),
-                    prepared.traceId(),
-                    prepared.model(),
-                    finalStatus,
-                    result.finishReason(),
-                    (int) Math.min(Integer.MAX_VALUE, durationMs));
-        } catch (RuntimeException exception) {
-            log.warn("gateway trace completion could not be recorded", exception);
-        }
+            try {
+                traces.complete(
+                        prepared.scopeId(),
+                        prepared.traceId(),
+                        prepared.model(),
+                        finalStatus,
+                        result.finishReason(),
+                        recordedDurationMs);
+            } catch (RuntimeException exception) {
+                log.warn("gateway trace completion could not be recorded", exception);
+            }
+        });
         observationExporter.ifPresent(exporter -> {
             try {
                 exporter.export(new GatewayObservationExporter.Observation(
