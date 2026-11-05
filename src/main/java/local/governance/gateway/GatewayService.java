@@ -133,7 +133,8 @@ public class GatewayService {
         HttpResponse<InputStream> response;
         long dispatchStarted = System.nanoTime();
         try {
-            response = upstream.sendChatCompletion(prepared.body(), prepared.stream());
+            response = upstream.sendChatCompletion(
+                    prepared.body(), prepared.stream(), prepared.conversationKey());
         } catch (RuntimeException exception) {
             rateLimiter.releaseUpstream();
             long durationMs = Math.max(0, (System.nanoTime() - dispatchStarted) / 1_000_000);

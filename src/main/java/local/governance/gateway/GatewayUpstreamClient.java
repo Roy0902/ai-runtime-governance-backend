@@ -27,6 +27,10 @@ public class GatewayUpstreamClient {
     }
 
     public HttpResponse<InputStream> sendChatCompletion(byte[] body, boolean stream) {
+        return sendChatCompletion(body, stream, null);
+    }
+
+    public HttpResponse<InputStream> sendChatCompletion(byte[] body, boolean stream, String sessionId) {
         GovernanceProperties.GatewayProperties gateway = properties.getGateway();
         if (isBlank(gateway.getUpstreamBaseUrl()) || isBlank(gateway.getUpstreamApiKey())) {
             throw new APIException(
@@ -46,6 +50,9 @@ public class GatewayUpstreamClient {
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body));
         } catch (IllegalArgumentException exception) {
             throw new APIException("UPSTREAM_UNAVAILABLE", "The upstream URL is not valid.");
+        }
+        if (sessionId != null && !sessionId.isBlank()) {
+            request.header("x-opencode-session", sessionId);
         }
         if (!isBlank(gateway.getUpstreamOrganization())) {
             request.header("OpenAI-Organization", gateway.getUpstreamOrganization());

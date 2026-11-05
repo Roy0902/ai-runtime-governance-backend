@@ -2,3 +2,6 @@ target/
 logs/
 *.log
 .local-cache/
+
+# Local secrets
+.env

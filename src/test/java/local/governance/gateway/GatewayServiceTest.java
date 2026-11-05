@@ -104,7 +104,8 @@ class GatewayServiceTest {
                 """;
         when(guardrail.evaluate("hello"))
                 .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
-        when(upstream.sendChatCompletion(any(), eq(false)))
+        when(upstream.sendChatCompletion(
+                    any(), eq(false), any()))
                 .thenReturn(httpResponse(200, "application/json", responseBody));
 
         GatewayService.ProxyResponse response = service.exchange(principal, request, null);
@@ -148,7 +149,8 @@ class GatewayServiceTest {
                         List.of("FX-EMAIL"),
                         List.of()));
         ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
-        when(upstream.sendChatCompletion(forwarded.capture(), eq(false)))
+        when(upstream.sendChatCompletion(
+                    forwarded.capture(), eq(false), any()))
                 .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
 
         service.exchange(principal, request, null).body().writeTo(new ByteArrayOutputStream());
@@ -254,7 +256,8 @@ class GatewayServiceTest {
                         List.of("FX-EMAIL"),
                         List.of()));
         ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
-        when(upstream.sendChatCompletion(forwarded.capture(), eq(false)))
+        when(upstream.sendChatCompletion(
+                    forwarded.capture(), eq(false), any()))
                 .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
 
         service.exchange(principal, bytes("""
@@ -282,7 +285,8 @@ class GatewayServiceTest {
     void preservesAnUpstreamErrorStatusAndMarksTheTraceFailed() throws Exception {
         when(guardrail.evaluate("hello"))
                 .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
-        when(upstream.sendChatCompletion(any(), eq(false)))
+        when(upstream.sendChatCompletion(
+                    any(), eq(false), any()))
                 .thenReturn(httpResponse(429, "application/json", "{\"error\":{\"message\":\"slow down\"}}"));
 
         GatewayService.ProxyResponse response = service.exchange(principal, bytes(
@@ -301,7 +305,8 @@ class GatewayServiceTest {
     void marksTheTraceFailedWhenDispatchFails() {
         when(guardrail.evaluate("hello"))
                 .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
-        when(upstream.sendChatCompletion(any(), eq(false)))
+        when(upstream.sendChatCompletion(
+                    any(), eq(false), any()))
                 .thenThrow(new APIException("UPSTREAM_UNAVAILABLE", "down"));
 
         APIException exception = assertThrows(
@@ -325,7 +330,8 @@ class GatewayServiceTest {
         when(guardrail.evaluate("hello"))
                 .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
         ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
-        when(upstream.sendChatCompletion(forwarded.capture(), eq(true)))
+        when(upstream.sendChatCompletion(
+                    forwarded.capture(), eq(true), any()))
                 .thenReturn(httpResponse(200, "text/event-stream", "data: [DONE]\n\n"));
 
         service.exchange(principal, bytes(
@@ -344,7 +350,8 @@ class GatewayServiceTest {
         when(guardrail.evaluate("hello"))
                 .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
         ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
-        when(upstream.sendChatCompletion(forwarded.capture(), eq(false)))
+        when(upstream.sendChatCompletion(
+                    forwarded.capture(), eq(false), any()))
                 .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
 
         service.exchange(principal, request, null).body().writeTo(new ByteArrayOutputStream());
