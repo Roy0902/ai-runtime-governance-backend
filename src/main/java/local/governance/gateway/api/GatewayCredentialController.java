@@ -113,16 +113,19 @@ public class GatewayCredentialController {
     }
 
     private static Map<String, Object> openCodeConfig(String baseUrl, String token, String model) {
-        Map<String, Object> settings = new LinkedHashMap<>();
-        settings.put("baseURL", baseUrl);
-        settings.put("apiKey", token);
-        settings.put("headers", Map.of("X-Governance-Conversation-Id", "opencode"));
+        Map<String, Object> options = new LinkedHashMap<>();
+        options.put("baseURL", baseUrl);
+        options.put("apiKey", token);
+        options.put("headers", Map.of("X-Governance-Conversation-Id", "opencode"));
         Map<String, Object> provider = new LinkedHashMap<>();
+        provider.put("npm", "@ai-sdk/openai-compatible");
         provider.put("name", "AI Runtime Governance");
-        provider.put("package", "@opencode/ai/providers/openai-compatible");
-        provider.put("settings", settings);
+        provider.put("options", options);
         provider.put("models", Map.of(model, Map.of("name", model + " via AI Runtime Governance")));
-        return Map.of("providers", Map.of("governance", provider));
+        return Map.of(
+                "$schema", "https://opencode.ai/config.json",
+                "model", "governance/" + model,
+                "provider", Map.of("governance", provider));
     }
 
     private static List<Map<String, Object>> vsCodeConfig(String baseUrl, String model) {

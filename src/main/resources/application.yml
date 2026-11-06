@@ -57,6 +57,10 @@ governance:
     requests-per-minute: ${GOVERNANCE_GATEWAY_REQUESTS_PER_MINUTE:60}
     allow-unguarded-continuation: ${GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION:false}
     force-stream-usage: ${GOVERNANCE_GATEWAY_FORCE_STREAM_USAGE:false}
+  timeline:
+    max-members: ${GOVERNANCE_TIMELINE_MAX_MEMBERS:10000}
+    max-active: ${GOVERNANCE_TIMELINE_MAX_ACTIVE:5}
+    ttl-seconds: ${GOVERNANCE_TIMELINE_TTL_SECONDS:300}
   langfuse:
     enabled: ${LANGFUSE_ENABLED:false}
     base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
