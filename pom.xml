@@ -13,13 +13,14 @@
 
   <groupId>local.governance</groupId>
   <artifactId>ai-runtime-governance-backend</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
   <name>AI Runtime Governance backend</name>
   <description>Guarded AI gateway, activity timeline and native accounts</description>
 
   <properties>
     <java.version>25</java.version>
     <langchain4j.version>1.23.0</langchain4j.version>
+    <langfuse.version>0.3.0</langfuse.version>
     <opentelemetry.version>1.67.0</opentelemetry.version>
   </properties>
 
@@ -79,6 +80,25 @@
     <dependency>
       <groupId>dev.langchain4j</groupId>
       <artifactId>langchain4j-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j-open-ai</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.langfuse</groupId>
+      <artifactId>langfuse-java</artifactId>
+      <version>${langfuse.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.junit.jupiter</groupId>
+          <artifactId>junit-jupiter-api</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>io.opentelemetry</groupId>
