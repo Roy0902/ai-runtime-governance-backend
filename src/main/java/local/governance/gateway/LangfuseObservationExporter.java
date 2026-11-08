@@ -10,6 +10,7 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
 import io.opentelemetry.sdk.resources.Resource;
+import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SpanProcessor;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
@@ -22,6 +23,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import local.governance.config.GovernanceProperties;
 import org.slf4j.Logger;
@@ -86,6 +88,7 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
                 .setResource(Resource.getDefault().merge(Resource.create(Attributes.of(
                         AttributeKey.stringKey("service.name"), "ai-runtime-governance",
                         AttributeKey.stringKey("service.version"), "0.1.0"))))
+                .setIdGenerator(new TraceIdOverrideGenerator())
                 .addSpanProcessor(processor)
                 .build();
         this.tracer = provider.get("local.governance.gateway");
@@ -99,25 +102,27 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
         }
         try {
             long startedAt = Math.max(0, System.currentTimeMillis() - observation.durationMs());
-            Span span = tracer.spanBuilder("chat " + observation.model())
-                    .setSpanKind(SpanKind.SERVER)
-                    .setStartTimestamp(startedAt, TimeUnit.MILLISECONDS)
-                    .startSpan();
-            try {
-                try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
-                    traceAttributes(span, observation);
-                    if (observation.guardOutcome() != null) {
-                        guardrailSpan(observation);
+            TraceIdOverrideGenerator.withTraceId(observation.traceId(), () -> {
+                Span span = tracer.spanBuilder("chat " + observation.model())
+                        .setSpanKind(SpanKind.SERVER)
+                        .setStartTimestamp(startedAt, TimeUnit.MILLISECONDS)
+                        .startSpan();
+                try {
+                    try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
+                        traceAttributes(span, observation);
+                        if (observation.guardOutcome() != null) {
+                            guardrailSpan(observation);
+                        }
+                        span.setStatus(
+                                "completed".equals(observation.status())
+                                        ? StatusCode.OK
+                                        : StatusCode.ERROR,
+                                observation.status());
                     }
-                    span.setStatus(
-                            "completed".equals(observation.status())
-                                    ? StatusCode.OK
-                                    : StatusCode.ERROR,
-                            observation.status());
+                } finally {
+                    span.end();
                 }
-            } finally {
-                span.end();
-            }
+            });
         } catch (RuntimeException exception) {
             log.warn("could not build Langfuse observation", exception);
         }
@@ -250,6 +255,46 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
             return objectMapper.writeValueAsString(cost);
         } catch (Exception exception) {
             return "{}";
+        }
+    }
+
+    private static String traceIdHex(UUID traceId) {
+        return traceId.toString().replace("-", "");
+    }
+
+    /**
+     * Forces the OTel trace ID of the next root span to the local trace UUID so
+     * every generation of one conversation is grouped under one Langfuse trace.
+     * The override is thread-local because export runs on the request thread.
+     */
+    private static final class TraceIdOverrideGenerator implements IdGenerator {
+
+        private static final ThreadLocal<String> OVERRIDE = new ThreadLocal<>();
+        private static final IdGenerator RANDOM = IdGenerator.random();
+
+        private static void withTraceId(UUID traceId, Runnable action) {
+            String previous = OVERRIDE.get();
+            OVERRIDE.set(traceIdHex(traceId));
+            try {
+                action.run();
+            } finally {
+                if (previous == null) {
+                    OVERRIDE.remove();
+                } else {
+                    OVERRIDE.set(previous);
+                }
+            }
+        }
+
+        @Override
+        public String generateSpanId() {
+            return RANDOM.generateSpanId();
+        }
+
+        @Override
+        public String generateTraceId() {
+            String override = OVERRIDE.get();
+            return override == null ? RANDOM.generateTraceId() : override;
         }
     }
 

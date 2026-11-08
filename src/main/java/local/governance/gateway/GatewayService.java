@@ -218,7 +218,7 @@ public class GatewayService {
             String clientConversationId,
             String clientUserAgent) {
         GatewayGuardrail.Decision decision = guardrail.evaluate(parsed.userText());
-        UUID traceId = UUID.randomUUID();
+        UUID traceId = Uuid7.generate();
 
         if (decision.failed()) {
             traces.blocked(
@@ -301,7 +301,7 @@ public class GatewayService {
         Optional<Row> found = conversations.find(principal.scopeId(), conversationKey);
         if (found.isEmpty()) {
             if (properties.getGateway().isAllowUnguardedContinuation()) {
-                UUID traceId = UUID.randomUUID();
+                UUID traceId = Uuid7.generate();
                 turnRecorder.recordBypassedTurn(principal.scopeId(), traceId, parsed.model());
                 return new Prepared(
                         traceId,

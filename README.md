@@ -327,6 +327,10 @@ outcome and rule IDs. Continuations of a redacted turn do not re-export the
 prompt. Export is asynchronous and bounded; a Langfuse outage never fails the
 model request or changes the local timeline.
 
+New gateway traces use a UUIDv7 identifier, and the same 128-bit value is used as
+the OTLP trace ID. The Langfuse trace ID therefore equals `activity_trace.id`,
+and every model call in one conversation is grouped under one Langfuse trace.
+
 This is an explicit privacy change: the local activity timeline remains
 metadata-only, but Langfuse receives prompt and output content. Disable
 `LANGFUSE_ENABLED` if that is not acceptable for a deployment.
