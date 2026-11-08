@@ -385,8 +385,11 @@ governance:
         output-per-million: 10.00
         cached-input-per-million: 1.25
         reasoning-output-per-million: 10.00
-        currency: USD
 ```
+
+All configured prices, stored costs, and usage summaries are in USD. Setting a
+different `currency` fails at startup rather than mixing currencies in the
+ledger.
 
 If a model has no configured price, token counts are still stored and the cost
 is shown as "Not priced". Provider credit balances and billing-account spend are

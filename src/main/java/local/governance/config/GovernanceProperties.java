@@ -146,7 +146,12 @@ public class GovernanceProperties {
         }
 
         public void setCurrency(String currency) {
-            this.currency = currency == null || currency.isBlank() ? "USD" : currency;
+            String value = currency == null || currency.isBlank() ? "USD" : currency.trim();
+            if (!"USD".equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException(
+                        "Only USD pricing is supported; remove 'currency' or set it to USD.");
+            }
+            this.currency = "USD";
         }
     }
 

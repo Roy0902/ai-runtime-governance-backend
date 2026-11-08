@@ -2,6 +2,8 @@ package local.governance.gateway;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import local.governance.config.GovernanceProperties;
@@ -40,6 +42,16 @@ class GatewayPricingTest {
         GatewayPricing.Cost cost = pricing.calculate("reasoning-model", 0L, 1_000_000L, null, 250_000L);
 
         assertEquals(new BigDecimal("12.50000000"), cost.outputUsd());
+    }
+
+    @Test
+    void supportsOnlyUsdPricing() {
+        ModelPrice price = new ModelPrice();
+
+        assertEquals("USD", price.getCurrency());
+        assertThrows(IllegalArgumentException.class, () -> price.setCurrency("EUR"));
+        price.setCurrency("usd");
+        assertEquals("USD", price.getCurrency());
     }
 
     @Test
