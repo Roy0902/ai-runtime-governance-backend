@@ -51,7 +51,6 @@ public class MailService {
             throw APIException.unavailable();
         }
         Instant now = clock.instant();
-        repository.supersedeCurrentLinks(accountId, purpose, now);
         String token = tokens.issue();
         UUID linkId = UUID.randomUUID();
         LinkRow link = new LinkRow(

@@ -18,11 +18,9 @@ import local.governance.api.LossResponse;
 import local.governance.api.TraceDetailResponse;
 import local.governance.api.TracePageResponse;
 import local.governance.api.TraceSummaryResponse;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
-import local.governance.authentication.session.SessionService;
 import local.governance.config.GovernanceProperties;
 import local.governance.config.TestFaultRegistry;
+import local.governance.security.AppUserService;
 import local.governance.timeline.TimelineRepository.EventRow;
 import local.governance.timeline.TimelineRepository.TraceRow;
 import local.governance.timeline.TimelineRepository.TraversalRow;
@@ -34,22 +32,19 @@ public class TimelineReadService {
     public static final int TRACE_PAGE_SIZE = 50;
     public static final int EVENT_PAGE_SIZE = 200;
 
-    private final SessionService sessions;
-    private final AuthenticationRepository accounts;
+    private final AppUserService users;
     private final TimelineRepository timeline;
     private final TestFaultRegistry faults;
     private final GovernanceProperties properties;
     private final Clock clock;
 
     public TimelineReadService(
-            SessionService sessions,
-            AuthenticationRepository accounts,
+            AppUserService users,
             TimelineRepository timeline,
             TestFaultRegistry faults,
             GovernanceProperties properties,
             Clock clock) {
-        this.sessions = sessions;
-        this.accounts = accounts;
+        this.users = users;
         this.timeline = timeline;
         this.faults = faults;
         this.properties = properties;
@@ -186,10 +181,7 @@ public class TimelineReadService {
     }
 
     private UUID scope(HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        return accounts.accountById(current.accountId())
-                .map(AccountRow::scopeId)
-                .orElseThrow(APIException::notFound);
+        return users.requireScopeId();
     }
 
     private static UUID traceId(String raw) {

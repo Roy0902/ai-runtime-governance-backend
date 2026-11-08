@@ -34,8 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AuthenticationService {
 
-    public static final String ACCEPTED =
-            "If this request is eligible, we'll send an email with the next steps.";
+    public static final String REGISTERED = "Account created. Check your email to verify your address.";
+    public static final String REQUEST_ACCEPTED = "Request received.";
 
     private final AuthenticationRepository repository;
     private final PasswordHashService passwords;
@@ -99,16 +99,19 @@ public class AuthenticationService {
         String email = EmailPolicy.normalize(body.email());
         PasswordPolicy.validateNew(body.password(), "password");
         rateLimit.admit(RateLimitService.SIGNUP_SOURCE, rateLimit.sourceKey(request), Duration.ofHours(1), 10, 3600);
-        rateLimit.checkMailIdentity(email);
 
         if (repository.accountByEmail(email).isPresent()) {
-            return new AcceptedMailResponse(ACCEPTED);
+            throw new APIException(
+                    "EMAIL_ALREADY_REGISTERED",
+                    "An account with this email already exists. Sign in or reset your password.");
         }
+
+        rateLimit.checkMailIdentity(email);
         String hash = hashLimiter.submit(() -> passwords.hash(body.password()));
         UUID accountId = UUID.randomUUID();
         repository.insertAccount(accountId, email, hash, clock.instant());
         mailService.issueVerification(accountId, email);
-        return new AcceptedMailResponse(ACCEPTED);
+        return new AcceptedMailResponse(REGISTERED);
     }
 
     @Transactional
@@ -127,6 +130,8 @@ public class AuthenticationService {
         if (faults.enabled("consume-rollback")) {
             throw APIException.unavailable();
         }
+        repository.supersedeCurrentLinks(link.accountId(), "VERIFY", now);
+        repository.supersedeMailForAccount(link.accountId(), "VERIFY", now);
         AccountRow account = repository.accountById(link.accountId()).orElseThrow(APIException::notFound);
         if (account.emailVerifiedAt() == null) {
             repository.markVerified(account.id(), now);
@@ -156,7 +161,7 @@ public class AuthenticationService {
         repository.accountByEmail(email)
                 .filter((account) -> "PENDING".equals(account.status()) && account.emailVerifiedAt() == null)
                 .ifPresent((account) -> mailService.issueVerification(account.id(), account.email()));
-        return new AcceptedMailResponse(ACCEPTED);
+        return new AcceptedMailResponse(REQUEST_ACCEPTED);
     }
 
     @Transactional
@@ -170,7 +175,7 @@ public class AuthenticationService {
         repository.accountByEmail(email)
                 .filter((account) -> account.emailVerifiedAt() != null && !"DISABLED".equals(account.status()))
                 .ifPresent((account) -> mailService.issueReset(account.id(), account.email()));
-        return new AcceptedMailResponse(ACCEPTED);
+        return new AcceptedMailResponse(REQUEST_ACCEPTED);
     }
 
     @Transactional
@@ -190,6 +195,8 @@ public class AuthenticationService {
         if (!repository.consumeLink(link.id(), now)) {
             throw new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
         }
+        repository.supersedeCurrentLinks(link.accountId(), "RESET", now);
+        repository.supersedeMailForAccount(link.accountId(), "RESET", now);
         repository.updatePassword(link.accountId(), hash, now);
         repository.revokeAllSessions(link.accountId(), now);
         sessions.clearCookie(response);

@@ -28,7 +28,9 @@ public class RequestSizeFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = request.getRequestURI();
         String method = request.getMethod();
+        boolean formLogout = "/api/v1/keycloak/logout".equals(path);
         boolean mutation = path.startsWith("/api/")
+                && !formLogout
                 && ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method));
 
         if (mutation) {

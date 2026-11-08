@@ -9,11 +9,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import local.governance.api.APIException;
-import local.governance.authentication.session.SessionService;
 import local.governance.config.GovernanceProperties;
 import local.governance.gateway.GatewayCredentialService;
 import local.governance.gateway.GatewayCredentialService.Issued;
 import local.governance.gateway.GatewayCredentialService.Summary;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,26 +31,26 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 @RequestMapping("/api/v1/account/gateway-keys")
 public class GatewayCredentialController {
 
-    private final SessionService sessions;
+    private final AppUserService users;
     private final GatewayCredentialService credentials;
     private final GovernanceProperties properties;
     private final ObjectMapper objectMapper;
 
     public GatewayCredentialController(
-            SessionService sessions,
+            AppUserService users,
             GatewayCredentialService credentials,
             GovernanceProperties properties,
             ObjectMapper objectMapper) {
-        this.sessions = sessions;
+        this.users = users;
         this.credentials = credentials;
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
 
     @GetMapping
-    public List<Summary> list(HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        return credentials.list(current.accountId());
+    public List<Summary> list() {
+        AppUser user = users.requireCurrentUser();
+        return credentials.list(user.id());
     }
 
     @PostMapping
@@ -58,25 +59,23 @@ public class GatewayCredentialController {
             @RequestBody(required = false) CreateRequest body,
             HttpServletRequest request,
             HttpServletResponse response) {
-        sessions.requireCsrfIfBrowser(request);
-        SessionService.Current current = sessions.requireHuman(request);
-        sessions.requireRecentAuth(current);
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
 
         String name = body == null || body.name() == null || body.name().isBlank()
                 ? "default"
                 : body.name();
-        Issued issued = credentials.issue(current.accountId(), name);
+        Issued issued = credentials.issue(user.id(), name);
         return setup(issued, request);
     }
 
     @DeleteMapping("/{credentialId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void revoke(@PathVariable UUID credentialId, HttpServletRequest request) {
-        sessions.requireCsrfIfBrowser(request);
-        SessionService.Current current = sessions.requireHuman(request);
-        sessions.requireRecentAuth(current);
-        credentials.revoke(current.accountId(), credentialId);
+    public void revoke(@PathVariable UUID credentialId) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
+        credentials.revoke(user.id(), credentialId);
     }
 
     private GatewaySetupResponse setup(Issued issued, HttpServletRequest request) {

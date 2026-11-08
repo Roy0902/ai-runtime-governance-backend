@@ -32,6 +32,8 @@ management:
 
 governance:
   base-url: ${GOVERNANCE_BASE_URL:http://127.0.0.1:5173}
+  iam:
+    mode: ${GOVERNANCE_IAM_MODE:native}
   admin:
     allowed-os-users: ${GOVERNANCE_ADMIN_USERS:${user.name}}
   trusted-proxies: ${GOVERNANCE_TRUSTED_PROXIES:}

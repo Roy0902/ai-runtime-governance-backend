@@ -1,14 +1,14 @@
 package local.governance.integration.api;
 
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
 import java.util.UUID;
-import local.governance.authentication.session.SessionService;
 import local.governance.integration.HookCredentialService;
-import local.governance.integration.HookIntegration;
 import local.governance.integration.HookCredentialService.Issued;
 import local.governance.integration.HookCredentialService.Summary;
+import local.governance.integration.HookIntegration;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -23,39 +23,34 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/account/hook-credentials")
 public class HookCredentialController {
 
-    private final SessionService sessions;
+    private final AppUserService users;
     private final HookCredentialService credentials;
 
-    public HookCredentialController(SessionService sessions, HookCredentialService credentials) {
-        this.sessions = sessions;
+    public HookCredentialController(AppUserService users, HookCredentialService credentials) {
+        this.users = users;
         this.credentials = credentials;
     }
 
     @GetMapping
-    public List<Summary> list(HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        return credentials.list(current.accountId());
+    public List<Summary> list() {
+        AppUser user = users.requireCurrentUser();
+        return credentials.list(user.id());
     }
 
     @PostMapping("/{integration}")
     @ResponseStatus(HttpStatus.CREATED)
-    public Issued issue(
-            @PathVariable String integration,
-            HttpServletRequest request,
-            HttpServletResponse response) {
-        sessions.requireCsrfIfBrowser(request);
-        SessionService.Current current = sessions.requireHuman(request);
-        sessions.requireRecentAuth(current);
+    public Issued issue(@PathVariable String integration, HttpServletResponse response) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-        return credentials.issue(current.accountId(), HookIntegration.fromId(integration));
+        return credentials.issue(user.id(), HookIntegration.fromId(integration));
     }
 
     @DeleteMapping("/{credentialId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void revoke(@PathVariable UUID credentialId, HttpServletRequest request) {
-        sessions.requireCsrfIfBrowser(request);
-        SessionService.Current current = sessions.requireHuman(request);
-        sessions.requireRecentAuth(current);
-        credentials.revoke(current.accountId(), credentialId);
+    public void revoke(@PathVariable UUID credentialId) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
+        credentials.revoke(user.id(), credentialId);
     }
 }

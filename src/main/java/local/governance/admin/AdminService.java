@@ -10,10 +10,12 @@ import local.governance.authentication.persistence.AuthenticationRepository.Acco
 import local.governance.authentication.persistence.AuthenticationRepository.OperationRow;
 import local.governance.config.DispatchStateStore;
 import local.governance.config.TestFaultRegistry;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@Profile("native")
 public class AdminService {
 
     private final AuthenticationRepository repository;
