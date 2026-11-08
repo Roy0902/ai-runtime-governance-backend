@@ -54,7 +54,7 @@ public class ModelUsageRepository {
                     total_cost_usd, currency, request_bytes, response_bytes,
                     capture_truncated, duration_ms, time_to_first_byte_ms, error_type,
                     error_code, error_message, provider_usage, response_headers,
-                    received_at)
+                    langfuse_observation_id, received_at)
                 VALUES (
                     :id, :scope, :trace, :credential, :conversation,
                     :clientConversationId, :clientUserAgent, :provider,
@@ -69,7 +69,7 @@ public class ModelUsageRepository {
                     :errorMessage,
                     CASE WHEN :providerUsage = '' THEN NULL ELSE CAST(:providerUsage AS jsonb) END,
                     CASE WHEN :responseHeaders = '' THEN NULL ELSE CAST(:responseHeaders AS jsonb) END,
-                    :receivedAt)
+                    :langfuseObservationId, :receivedAt)
                 """)
                 .param("id", row.id())
                 .param("scope", row.scopeId())
@@ -110,6 +110,7 @@ public class ModelUsageRepository {
                 .param("errorMessage", row.errorMessage())
                 .param("providerUsage", row.providerUsageJson() == null ? "" : row.providerUsageJson())
                 .param("responseHeaders", row.responseHeadersJson() == null ? "" : row.responseHeadersJson())
+                .param("langfuseObservationId", row.langfuseObservationId())
                 .param("receivedAt", ts(row.receivedAt()))
                 .update();
     }
@@ -244,6 +245,7 @@ public class ModelUsageRepository {
                 rs.getString("error_message"),
                 rs.getString("provider_usage"),
                 rs.getString("response_headers"),
+                rs.getString("langfuse_observation_id"),
                 instant(rs.getObject("received_at", OffsetDateTime.class)));
     }
 

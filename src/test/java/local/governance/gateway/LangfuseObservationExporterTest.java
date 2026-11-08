@@ -2,6 +2,7 @@ package local.governance.gateway;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,7 +28,7 @@ class LangfuseObservationExporterTest {
         UUID scopeId = UUID.randomUUID();
         UUID traceId = UUID.randomUUID();
 
-        exporter.export(new GatewayObservationExporter.Observation(
+        String observationId = exporter.export(new GatewayObservationExporter.Observation(
                 scopeId,
                 traceId,
                 "conversation-key",
@@ -49,6 +50,7 @@ class LangfuseObservationExporterTest {
         List<SpanData> spans = inMemory.getFinishedSpanItems();
         SpanData generation = span(spans, "chat gpt-4o");
         assertNotNull(generation);
+        assertEquals(generation.getSpanId(), observationId);
         assertEquals(traceId.toString().replace("-", ""), generation.getTraceId());
         assertEquals("gateway gpt-4o", string(generation, "langfuse.trace.name"));
         assertEquals(scopeId.toString(), string(generation, "langfuse.user.id"));
@@ -77,10 +79,13 @@ class LangfuseObservationExporterTest {
         Observation first = observation(traceId);
         Observation second = observation(traceId);
 
-        exporter.export(first);
-        exporter.export(second);
+        String firstId = exporter.export(first);
+        String secondId = exporter.export(second);
 
         String expected = traceId.toString().replace("-", "");
+        assertNotNull(firstId);
+        assertNotNull(secondId);
+        assertTrue(!firstId.equals(secondId));
         List<SpanData> generations = inMemory.getFinishedSpanItems().stream()
                 .filter(span -> span.getName().equals("chat gpt-4o"))
                 .toList();
@@ -118,9 +123,9 @@ class LangfuseObservationExporterTest {
         LangfuseObservationExporter noKeys =
                 new LangfuseObservationExporter(disabled, new ObjectMapper());
 
-        noKeys.export(new GatewayObservationExporter.Observation(
+        assertNull(noKeys.export(new GatewayObservationExporter.Observation(
                 UUID.randomUUID(), UUID.randomUUID(), null, "gpt-4o", null, "x",
-                "completed", null, null, null, null, null, null, null, null, 1, "allow"));
+                "completed", null, null, null, null, null, null, null, null, 1, "allow")));
         noKeys.shutdown();
 
         assertTrue(inMemory.getFinishedSpanItems().isEmpty());

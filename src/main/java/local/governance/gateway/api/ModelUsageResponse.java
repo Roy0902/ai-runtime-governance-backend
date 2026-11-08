@@ -45,5 +45,6 @@ public record ModelUsageResponse(
         String errorMessage,
         Map<String, Object> providerUsage,
         Map<String, String> responseHeaders,
+        String langfuseObservationId,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSX", timezone = "UTC")
         Instant receivedAt) {}

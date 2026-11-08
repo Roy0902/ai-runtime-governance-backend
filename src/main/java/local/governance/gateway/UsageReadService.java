@@ -135,6 +135,7 @@ public class UsageReadService {
                 row.errorMessage(),
                 object(row.providerUsageJson()),
                 strings(row.responseHeadersJson()),
+                row.langfuseObservationId(),
                 row.receivedAt());
     }
 

@@ -45,4 +45,5 @@ public record ModelUsageRow(
         String errorMessage,
         String providerUsageJson,
         String responseHeadersJson,
+        String langfuseObservationId,
         Instant receivedAt) {}

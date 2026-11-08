@@ -49,7 +49,8 @@ public class ModelUsageRecorder {
             String errorCode,
             String errorMessage,
             Map<String, Object> providerUsage,
-            Map<String, String> responseHeaders) {}
+            Map<String, String> responseHeaders,
+            String langfuseObservationId) {}
 
     private final ModelUsageRepository repository;
     private final ObjectMapper objectMapper;
@@ -105,6 +106,7 @@ public class ModelUsageRecorder {
                 usage.errorMessage(),
                 json(usage.providerUsage()),
                 json(usage.responseHeaders()),
+                usage.langfuseObservationId(),
                 clock.instant()));
     }
 

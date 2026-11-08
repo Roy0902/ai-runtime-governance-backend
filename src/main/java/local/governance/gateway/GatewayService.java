@@ -191,7 +191,8 @@ public class GatewayService {
                     code,
                     truncate(exception.getMessage()),
                     Map.of(),
-                    Map.of()));
+                    Map.of(),
+                    null));
         } catch (RuntimeException recordFailure) {
             log.warn("gateway dispatch usage could not be recorded", recordFailure);
         }
@@ -413,6 +414,10 @@ public class GatewayService {
                 result.cachedInputTokens(),
                 result.reasoningOutputTokens());
 
+        String observationId = observationExporter
+                .map(exporter -> export(exporter, prepared, result, cost, finalStatus, durationMs))
+                .orElse(null);
+
         ModelUsageRecorder.Usage usageRecord = new ModelUsageRecorder.Usage(
                     prepared.scopeId(),
                     prepared.traceId(),
@@ -451,7 +456,8 @@ public class GatewayService {
                     result.errorCode(),
                     result.errorMessage(),
                     result.rawUsage(),
-                    safeHeaders(response));
+                    safeHeaders(response),
+                    observationId);
         int recordedDurationMs = (int) Math.min(Integer.MAX_VALUE, durationMs);
         outputPersistence.submit(() -> {
             try {
@@ -472,30 +478,38 @@ public class GatewayService {
                 log.warn("gateway trace completion could not be recorded", exception);
             }
         });
-        observationExporter.ifPresent(exporter -> {
-            try {
-                exporter.export(new GatewayObservationExporter.Observation(
-                        prepared.scopeId(),
-                        prepared.traceId(),
-                        prepared.conversationKey(),
-                        prepared.model(),
-                        prepared.prompt(),
-                        result.output(),
-                        finalStatus,
-                        toInteger(result.inputTokens()),
-                        toInteger(result.outputTokens()),
-                        toInteger(result.cachedInputTokens()),
-                        toInteger(result.reasoningOutputTokens()),
-                        toInteger(result.totalTokens()),
-                        result.providerReportedCostUsd(),
-                        cost.totalUsd(),
-                        result.finishReason(),
-                        durationMs,
-                        prepared.guardOutcome()));
-            } catch (RuntimeException exception) {
-                log.warn("gateway observation export failed", exception);
-            }
-        });
+    }
+
+    private String export(
+            GatewayObservationExporter exporter,
+            Prepared prepared,
+            GatewayResponseCapture.Capture result,
+            GatewayPricing.Cost cost,
+            String status,
+            long durationMs) {
+        try {
+            return exporter.export(new GatewayObservationExporter.Observation(
+                    prepared.scopeId(),
+                    prepared.traceId(),
+                    prepared.conversationKey(),
+                    prepared.model(),
+                    prepared.prompt(),
+                    result.output(),
+                    status,
+                    toInteger(result.inputTokens()),
+                    toInteger(result.outputTokens()),
+                    toInteger(result.cachedInputTokens()),
+                    toInteger(result.reasoningOutputTokens()),
+                    toInteger(result.totalTokens()),
+                    result.providerReportedCostUsd(),
+                    cost.totalUsd(),
+                    result.finishReason(),
+                    durationMs,
+                    prepared.guardOutcome()));
+        } catch (RuntimeException exception) {
+            log.warn("gateway observation export failed", exception);
+            return null;
+        }
     }
 
     private static Map<String, String> safeHeaders(HttpResponse<?> response) {

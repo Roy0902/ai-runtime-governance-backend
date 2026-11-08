@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import local.governance.config.GovernanceProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -96,36 +97,43 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
     }
 
     @Override
-    public void export(Observation observation) {
+    public String export(Observation observation) {
         if (tracer == null) {
-            return;
+            return null;
         }
         try {
             long startedAt = Math.max(0, System.currentTimeMillis() - observation.durationMs());
-            TraceIdOverrideGenerator.withTraceId(observation.traceId(), () -> {
-                Span span = tracer.spanBuilder("chat " + observation.model())
-                        .setSpanKind(SpanKind.SERVER)
-                        .setStartTimestamp(startedAt, TimeUnit.MILLISECONDS)
-                        .startSpan();
-                try {
-                    try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
-                        traceAttributes(span, observation);
-                        if (observation.guardOutcome() != null) {
-                            guardrailSpan(observation);
-                        }
-                        span.setStatus(
-                                "completed".equals(observation.status())
-                                        ? StatusCode.OK
-                                        : StatusCode.ERROR,
-                                observation.status());
-                    }
-                } finally {
-                    span.end();
-                }
-            });
+            return TraceIdOverrideGenerator.withTraceId(
+                    observation.traceId(), () -> exportSpan(observation, startedAt));
         } catch (RuntimeException exception) {
             log.warn("could not build Langfuse observation", exception);
+            return null;
         }
+    }
+
+    private String exportSpan(Observation observation, long startedAt) {
+        Span span = tracer.spanBuilder("chat " + observation.model())
+                .setParent(Context.root())
+                .setSpanKind(SpanKind.SERVER)
+                .setStartTimestamp(startedAt, TimeUnit.MILLISECONDS)
+                .startSpan();
+        String observationId = span.getSpanContext().getSpanId();
+        try {
+            try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
+                traceAttributes(span, observation);
+                if (observation.guardOutcome() != null) {
+                    guardrailSpan(observation);
+                }
+                span.setStatus(
+                        "completed".equals(observation.status())
+                                ? StatusCode.OK
+                                : StatusCode.ERROR,
+                        observation.status());
+            }
+        } finally {
+            span.end();
+        }
+        return observationId;
     }
 
     private void traceAttributes(Span span, Observation observation) {
@@ -272,11 +280,11 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
         private static final ThreadLocal<String> OVERRIDE = new ThreadLocal<>();
         private static final IdGenerator RANDOM = IdGenerator.random();
 
-        private static void withTraceId(UUID traceId, Runnable action) {
+        private static <T> T withTraceId(UUID traceId, Supplier<T> action) {
             String previous = OVERRIDE.get();
             OVERRIDE.set(traceIdHex(traceId));
             try {
-                action.run();
+                return action.get();
             } finally {
                 if (previous == null) {
                     OVERRIDE.remove();

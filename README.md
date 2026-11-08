@@ -350,6 +350,8 @@ timeline metadata. The stored fields include:
 - computed input/output/cached cost and any provider-reported cost
 - outcome, error type/code/message, account scope, credential id, conversation
   key, client conversation id, and client user agent
+- the Langfuse observation id when export is enabled, so each call's output can
+  be fetched by id without storing content locally
 - Langfuse remains the content store; `model_usage` never stores prompt or
   output bodies
 
