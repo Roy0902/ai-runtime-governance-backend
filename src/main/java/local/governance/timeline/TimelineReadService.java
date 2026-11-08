@@ -15,6 +15,7 @@ import local.governance.api.CoverageResponse;
 import local.governance.api.EventMetadataResponse;
 import local.governance.api.EventPageResponse;
 import local.governance.api.LossResponse;
+import local.governance.api.ModelUsageSummaryResponse;
 import local.governance.api.TraceDetailResponse;
 import local.governance.api.TracePageResponse;
 import local.governance.api.TraceSummaryResponse;
@@ -37,6 +38,7 @@ public class TimelineReadService {
     private final SessionService sessions;
     private final AuthenticationRepository accounts;
     private final TimelineRepository timeline;
+    private final EventUsageLookup usage;
     private final TestFaultRegistry faults;
     private final GovernanceProperties properties;
     private final Clock clock;
@@ -45,12 +47,14 @@ public class TimelineReadService {
             SessionService sessions,
             AuthenticationRepository accounts,
             TimelineRepository timeline,
+            EventUsageLookup usage,
             TestFaultRegistry faults,
             GovernanceProperties properties,
             Clock clock) {
         this.sessions = sessions;
         this.accounts = accounts;
         this.timeline = timeline;
+        this.usage = usage;
         this.faults = faults;
         this.properties = properties;
         this.clock = clock;
@@ -172,8 +176,11 @@ public class TimelineReadService {
         List<UUID> pageIds = members.subList(position, end);
         Map<UUID, EventRow> rows = timeline.eventsByIds(scope, traceId, pageIds).stream()
                 .collect(Collectors.toMap(EventRow::id, Function.identity()));
+        Map<UUID, ModelUsageSummaryResponse> usageByEvent = usage.byEvent(scope, traceId);
         List<ActivityEventResponse> items = pageIds.stream()
-                .map((id) -> rows.containsKey(id) ? event(rows.get(id)) : tombstoneEvent(traceId, id))
+                .map((id) -> rows.containsKey(id)
+                        ? event(rows.get(id), usageByEvent.get(id))
+                        : tombstoneEvent(traceId, id))
                 .toList();
         String nextCursor = end < members.size() ? TimelineCursor.encode(traversalId, end) : null;
         return new EventPageResponse(items, nextCursor);
@@ -232,7 +239,7 @@ public class TimelineReadService {
                         : null);
     }
 
-    private static ActivityEventResponse event(EventRow row) {
+    private static ActivityEventResponse event(EventRow row, ModelUsageSummaryResponse usage) {
         String relationship = row.parentEventId() == null
                 ? "root"
                 : row.parentExists() ? "linked" : "unresolved";
@@ -259,11 +266,12 @@ public class TimelineReadService {
                 row.durationMs(),
                 row.identity(),
                 metadata,
+                usage,
                 false);
     }
 
     private static ActivityEventResponse tombstoneEvent(UUID traceId, UUID eventId) {
         return new ActivityEventResponse(
-                eventId, traceId, null, null, null, null, null, null, null, null, true);
+                eventId, traceId, null, null, null, null, null, null, null, null, null, true);
     }
 }

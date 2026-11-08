@@ -156,6 +156,7 @@ public class GatewayService {
             usage.record(new ModelUsageRecorder.Usage(
                     prepared.scopeId(),
                     prepared.traceId(),
+                    null,
                     prepared.credentialId(),
                     prepared.conversationKey(),
                     prepared.clientConversationId(),
@@ -417,10 +418,12 @@ public class GatewayService {
         String observationId = observationExporter
                 .map(exporter -> export(exporter, prepared, result, cost, finalStatus, durationMs))
                 .orElse(null);
+        UUID eventId = Uuid7.generate();
 
         ModelUsageRecorder.Usage usageRecord = new ModelUsageRecorder.Usage(
                     prepared.scopeId(),
                     prepared.traceId(),
+                    eventId,
                     prepared.credentialId(),
                     prepared.conversationKey(),
                     prepared.clientConversationId(),
@@ -461,21 +464,22 @@ public class GatewayService {
         int recordedDurationMs = (int) Math.min(Integer.MAX_VALUE, durationMs);
         outputPersistence.submit(() -> {
             try {
-                usage.record(usageRecord);
-            } catch (RuntimeException exception) {
-                log.warn("gateway model usage could not be recorded", exception);
-            }
-
-            try {
                 traces.complete(
                         prepared.scopeId(),
                         prepared.traceId(),
                         prepared.model(),
                         finalStatus,
                         result.finishReason(),
-                        recordedDurationMs);
+                        recordedDurationMs,
+                        eventId);
             } catch (RuntimeException exception) {
                 log.warn("gateway trace completion could not be recorded", exception);
+            }
+
+            try {
+                usage.record(usageRecord);
+            } catch (RuntimeException exception) {
+                log.warn("gateway model usage could not be recorded", exception);
             }
         });
     }

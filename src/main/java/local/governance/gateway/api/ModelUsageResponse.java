@@ -10,6 +10,7 @@ import java.util.UUID;
 public record ModelUsageResponse(
         UUID id,
         UUID traceId,
+        UUID eventId,
         UUID credentialId,
         String clientConversationId,
         String clientUserAgent,

@@ -45,7 +45,7 @@ public class ModelUsageRepository {
     public void insert(ModelUsageRow row) {
         jdbc.sql("""
                 INSERT INTO model_usage (
-                    id, scope_id, trace_id, credential_id, conversation_key,
+                    id, scope_id, trace_id, event_id, credential_id, conversation_key,
                     client_conversation_id, client_user_agent, provider,
                     requested_model, response_model, response_id, system_fingerprint,
                     service_tier, stream, status_code, outcome, finish_reasons,
@@ -57,7 +57,7 @@ public class ModelUsageRepository {
                     error_code, error_message, provider_usage, response_headers,
                     langfuse_observation_id, received_at)
                 VALUES (
-                    :id, :scope, :trace, :credential, :conversation,
+                    :id, :scope, :trace, :eventId, :credential, :conversation,
                     :clientConversationId, :clientUserAgent, :provider,
                     :requestedModel, :responseModel, :responseId, :fingerprint,
                     :serviceTier, :stream, :statusCode, :outcome,
@@ -75,6 +75,7 @@ public class ModelUsageRepository {
                 .param("id", row.id())
                 .param("scope", row.scopeId())
                 .param("trace", row.traceId())
+                .param("eventId", row.eventId())
                 .param("credential", row.credentialId())
                 .param("conversation", row.conversationKey())
                 .param("clientConversationId", row.clientConversationId())
@@ -227,6 +228,7 @@ public class ModelUsageRepository {
                 rs.getObject("id", UUID.class),
                 rs.getObject("scope_id", UUID.class),
                 rs.getObject("trace_id", UUID.class),
+                rs.getObject("event_id", UUID.class),
                 rs.getObject("credential_id", UUID.class),
                 rs.getString("conversation_key"),
                 rs.getString("client_conversation_id"),

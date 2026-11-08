@@ -9,6 +9,7 @@ public record ModelUsageRow(
         UUID id,
         UUID scopeId,
         UUID traceId,
+        UUID eventId,
         UUID credentialId,
         String conversationKey,
         String clientConversationId,

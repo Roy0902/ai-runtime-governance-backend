@@ -113,6 +113,7 @@ public class UsageReadService {
         return new ModelUsageResponse(
                 row.id(),
                 row.traceId(),
+                row.eventId(),
                 row.credentialId(),
                 row.clientConversationId(),
                 row.clientUserAgent(),

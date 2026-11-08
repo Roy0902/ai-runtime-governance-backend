@@ -125,8 +125,10 @@ class GatewayServiceTest {
                 eq(List.of()),
                 eq("conversation-key"),
                 eq("message-hash"));
+        ArgumentCaptor<UUID> completedEvent = ArgumentCaptor.forClass(UUID.class);
         verify(traces).complete(
-                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("completed"), eq("stop"), anyInt());
+                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("completed"), eq("stop"),
+                anyInt(), completedEvent.capture());
 
         ArgumentCaptor<ModelUsageRecorder.Usage> recorded =
                 ArgumentCaptor.forClass(ModelUsageRecorder.Usage.class);
@@ -135,6 +137,7 @@ class GatewayServiceTest {
         assertEquals(1L, recorded.getValue().outputTokens());
         assertEquals("stop", recorded.getValue().finishReasons().getFirst());
         assertEquals("completed", recorded.getValue().outcome());
+        assertEquals(completedEvent.getValue(), recorded.getValue().eventId());
     }
 
     @Test
@@ -307,7 +310,8 @@ class GatewayServiceTest {
                 "email [REDACTED_EMAIL]",
                 sent.path("messages").path(0).path("content").asText());
         verify(traces).complete(
-                eq(scopeId), eq(traceId), eq("gpt-4o"), eq("completed"), isNull(), anyInt());
+                eq(scopeId), eq(traceId), eq("gpt-4o"), eq("completed"), isNull(),
+                anyInt(), any(UUID.class));
         verify(turnRecorder, never()).recordGuardedTurn(
                 any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -329,7 +333,8 @@ class GatewayServiceTest {
         runOutputPersistence();
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("slow down"));
         verify(traces).complete(
-                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("failed"), isNull(), anyInt());
+                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("failed"), isNull(),
+                anyInt(), any(UUID.class));
     }
 
     @Test

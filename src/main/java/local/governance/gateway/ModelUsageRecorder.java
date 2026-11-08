@@ -14,6 +14,7 @@ public class ModelUsageRecorder {
     public record Usage(
             UUID scopeId,
             UUID traceId,
+            UUID eventId,
             UUID credentialId,
             String conversationKey,
             String clientConversationId,
@@ -70,6 +71,7 @@ public class ModelUsageRecorder {
                 UUID.randomUUID(),
                 usage.scopeId(),
                 usage.traceId(),
+                usage.eventId(),
                 usage.credentialId(),
                 usage.conversationKey(),
                 usage.clientConversationId(),

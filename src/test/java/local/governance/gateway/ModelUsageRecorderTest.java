@@ -24,10 +24,12 @@ class ModelUsageRecorderTest {
                 new ObjectMapper(),
                 Clock.fixed(Instant.parse("2026-11-08T00:00:00Z"), ZoneOffset.UTC));
         UUID traceId = Uuid7.generate();
+        UUID eventId = Uuid7.generate();
 
         recorder.record(new ModelUsageRecorder.Usage(
                 UUID.randomUUID(),
                 traceId,
+                eventId,
                 null,
                 "conversation-key",
                 null,
@@ -70,5 +72,6 @@ class ModelUsageRecorderTest {
         verify(repository).insert(row.capture());
         assertEquals("0123456789abcdef", row.getValue().langfuseObservationId());
         assertEquals(traceId, row.getValue().traceId());
+        assertEquals(eventId, row.getValue().eventId());
     }
 }
