@@ -359,8 +359,15 @@ Read it through:
 
 ```text
 GET /api/v1/usage/traces/{traceId}
+GET /api/v1/usage/traces/{traceId}/observations/{observationId}
 GET /api/v1/usage/summary?from=<ISO instant>&to=<ISO instant>
 ```
+
+The observation endpoint reads the generated output back from Langfuse on
+demand. It verifies that the observation id belongs to a model call in the
+scoped trace, so output content is never stored locally. It returns
+`LANGFUSE_DISABLED` when export is off and `LANGFUSE_UNAVAILABLE` when the
+Langfuse read fails.
 
 The summary defaults to the last 30 days and returns totals plus breakdowns by
 model and UTC day. The trace detail page shows a **Model usage** panel, and the

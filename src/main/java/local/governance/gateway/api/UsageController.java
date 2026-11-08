@@ -2,6 +2,7 @@ package local.governance.gateway.api;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import local.governance.gateway.LangfuseObservationClient;
 import local.governance.gateway.UsageReadService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,6 +25,14 @@ public class UsageController {
             HttpServletRequest request,
             @PathVariable String traceId) {
         return service.traceUsage(request, traceId);
+    }
+
+    @GetMapping("/traces/{traceId}/observations/{observationId}")
+    public LangfuseObservationClient.ObservationContent observation(
+            HttpServletRequest request,
+            @PathVariable String traceId,
+            @PathVariable String observationId) {
+        return service.observation(request, traceId, observationId);
     }
 
     @GetMapping("/summary")

@@ -34,6 +34,8 @@ public class APIException extends RuntimeException {
             Map.entry("REQUEST_TOO_LARGE", HttpStatus.PAYLOAD_TOO_LARGE),
             Map.entry("UPSTREAM_UNAVAILABLE", HttpStatus.BAD_GATEWAY),
             Map.entry("UPSTREAM_TIMEOUT", HttpStatus.GATEWAY_TIMEOUT),
+            Map.entry("LANGFUSE_DISABLED", HttpStatus.SERVICE_UNAVAILABLE),
+            Map.entry("LANGFUSE_UNAVAILABLE", HttpStatus.BAD_GATEWAY),
             Map.entry("SECRETS_ALREADY_ISSUED", HttpStatus.CONFLICT),
             Map.entry("LINK_NOT_USABLE", HttpStatus.GONE),
             Map.entry("OPERATION_EXPIRED", HttpStatus.GONE),

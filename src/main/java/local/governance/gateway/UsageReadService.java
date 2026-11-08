@@ -30,6 +30,7 @@ public class UsageReadService {
     private final AuthenticationRepository accounts;
     private final TimelineRepository timeline;
     private final ModelUsageRepository usage;
+    private final LangfuseObservationClient observations;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -38,12 +39,14 @@ public class UsageReadService {
             AuthenticationRepository accounts,
             TimelineRepository timeline,
             ModelUsageRepository usage,
+            LangfuseObservationClient observations,
             ObjectMapper objectMapper,
             Clock clock) {
         this.sessions = sessions;
         this.accounts = accounts;
         this.timeline = timeline;
         this.usage = usage;
+        this.observations = observations;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -53,6 +56,16 @@ public class UsageReadService {
         UUID traceId = traceId(rawTraceId);
         timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
         return usage.forTrace(scope, traceId).stream().map(this::response).toList();
+    }
+
+    public LangfuseObservationClient.ObservationContent observation(
+            HttpServletRequest request, String rawTraceId, String observationId) {
+        UUID scope = scope(request);
+        UUID traceId = traceId(rawTraceId);
+        timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
+        ModelUsageRow row = usage.findByObservationId(scope, traceId, observationId)
+                .orElseThrow(APIException::notFound);
+        return observations.fetch(traceId, observationId, row.receivedAt());
     }
 
     public UsageSummaryResponse summary(HttpServletRequest request, String rawFrom, String rawTo) {

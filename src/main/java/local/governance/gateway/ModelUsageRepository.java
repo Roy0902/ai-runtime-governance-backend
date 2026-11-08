@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -125,6 +126,23 @@ public class ModelUsageRepository {
                 .param("trace", traceId)
                 .query(ModelUsageRepository::map)
                 .list();
+    }
+
+    public Optional<ModelUsageRow> findByObservationId(
+            UUID scopeId, UUID traceId, String observationId) {
+        return jdbc.sql("""
+                SELECT * FROM model_usage
+                WHERE scope_id = :scope
+                  AND trace_id = :trace
+                  AND langfuse_observation_id = :observation
+                ORDER BY received_at DESC
+                LIMIT 1
+                """)
+                .param("scope", scopeId)
+                .param("trace", traceId)
+                .param("observation", observationId)
+                .query(ModelUsageRepository::map)
+                .optional();
     }
 
     public List<SummaryRow> byModel(UUID scopeId, Instant from, Instant to) {
