@@ -22,8 +22,13 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import local.governance.config.GovernanceProperties;
+import local.governance.provider.ProviderCredentialService;
+import local.governance.provider.ProviderKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,56 +49,63 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
 
     private final GovernanceProperties properties;
     private final ObjectMapper objectMapper;
-    private final SdkTracerProvider provider;
-    private final Tracer tracer;
+    private final ProviderCredentialService credentials;
+    private final Tracer globalTracer;
+    private final boolean testMode;
+    private final Map<String, TracerHandle> ownerTracers = new ConcurrentHashMap<>();
+    private final List<SdkTracerProvider> providers = new CopyOnWriteArrayList<>();
+
+    private record TracerHandle(SdkTracerProvider provider, Tracer tracer) {}
 
     @Autowired
-    public LangfuseObservationExporter(GovernanceProperties properties, ObjectMapper objectMapper) {
-        this(properties, objectMapper, null);
+    public LangfuseObservationExporter(
+            GovernanceProperties properties,
+            ObjectMapper objectMapper,
+            ProviderCredentialService credentials) {
+        this(properties, objectMapper, null, credentials);
     }
 
     LangfuseObservationExporter(
             GovernanceProperties properties,
             ObjectMapper objectMapper,
             SpanExporter testExporter) {
+        this(properties, objectMapper, testExporter, null);
+    }
+
+    LangfuseObservationExporter(GovernanceProperties properties, ObjectMapper objectMapper) {
+        this(properties, objectMapper, null, null);
+    }
+
+    private LangfuseObservationExporter(
+            GovernanceProperties properties,
+            ObjectMapper objectMapper,
+            SpanExporter testExporter,
+            ProviderCredentialService credentials) {
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.credentials = credentials;
+        this.testMode = testExporter != null;
         GovernanceProperties.LangfuseProperties langfuse = properties.getLangfuse();
-        if (testExporter == null
-                && (isBlank(langfuse.getPublicKey()) || isBlank(langfuse.getSecretKey()))) {
-            log.warn("Langfuse is enabled but its keys are incomplete; observations will not be exported");
-            this.provider = null;
-            this.tracer = null;
+        boolean configured = testExporter != null
+                || (!isBlank(langfuse.getPublicKey()) && !isBlank(langfuse.getSecretKey()));
+        if (!configured) {
+            log.warn("Langfuse has no deployment keys; per-owner credentials are used when present");
+            this.globalTracer = null;
             return;
         }
-
-        SpanExporter exporter = testExporter != null
-                ? testExporter
-                : OtlpHttpSpanExporter.builder()
-                        .setEndpoint(endpoint(langfuse.getBaseUrl()))
-                        .addHeader("Authorization", basic(langfuse.getPublicKey(), langfuse.getSecretKey()))
-                        .addHeader("x-langfuse-ingestion-version", "4")
-                        .setTimeout(Duration.ofSeconds(Math.max(1, langfuse.getTimeoutSeconds())))
-                        .build();
-        SpanProcessor processor = testExporter != null
-                ? SimpleSpanProcessor.create(exporter)
-                : BatchSpanProcessor.builder(exporter)
-                        .setMaxQueueSize(Math.max(1, langfuse.getQueueCapacity()))
-                        .setScheduleDelay(Duration.ofSeconds(1))
-                        .setExporterTimeout(Duration.ofSeconds(Math.max(1, langfuse.getTimeoutSeconds())))
-                        .build();
-        this.provider = SdkTracerProvider.builder()
-                .setResource(Resource.getDefault().merge(Resource.create(Attributes.of(
-                        AttributeKey.stringKey("service.name"), "ai-runtime-governance",
-                        AttributeKey.stringKey("service.version"), "0.1.0"))))
-                .addSpanProcessor(processor)
-                .build();
-        this.tracer = provider.get("local.governance.gateway");
+        TracerHandle handle = build(
+                testExporter,
+                langfuse.getBaseUrl(),
+                langfuse.getPublicKey(),
+                langfuse.getSecretKey());
+        this.globalTracer = handle.tracer();
+        providers.add(handle.provider());
         log.info("Langfuse OTLP export enabled for {}", endpoint(langfuse.getBaseUrl()));
     }
 
     @Override
     public void export(Observation observation) {
+        Tracer tracer = tracerFor(observation);
         if (tracer == null) {
             return;
         }
@@ -107,7 +119,7 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
                 try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
                     traceAttributes(span, observation);
                     if (observation.guardOutcome() != null) {
-                        guardrailSpan(observation);
+                        guardrailSpan(tracer, observation);
                     }
                     span.setStatus(
                             "completed".equals(observation.status())
@@ -194,7 +206,73 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
         }
     }
 
-    private void guardrailSpan(Observation observation) {
+    private Tracer tracerFor(Observation observation) {
+        if (testMode) {
+            return globalTracer;
+        }
+        if (credentials == null || observation.accountId() == null) {
+            return globalTracer;
+        }
+        try {
+            Optional<ProviderCredentialService.Resolved> resolved = observation.groupId() != null
+                    ? credentials.resolveForGroup(observation.groupId(), ProviderKind.LANGFUSE)
+                    : credentials.resolve(observation.accountId(), ProviderKind.LANGFUSE);
+            if (resolved.isEmpty() || isBlank(resolved.get().accessKey())) {
+                return globalTracer;
+            }
+            ProviderCredentialService.Resolved value = resolved.get();
+            String key = (observation.groupId() != null ? "g:" + observation.groupId() : "u:" + observation.accountId())
+                    + ":" + fingerprint(value.accessKey(), value.secret());
+            TracerHandle cached = ownerTracers.get(key);
+            if (cached != null) {
+                return cached.tracer();
+            }
+            TracerHandle handle = build(
+                    null, properties.getLangfuse().getBaseUrl(), value.accessKey(), value.secret());
+            TracerHandle existing = ownerTracers.putIfAbsent(key, handle);
+            if (existing != null) {
+                handle.provider().shutdown();
+                return existing.tracer();
+            }
+            providers.add(handle.provider());
+            return handle.tracer();
+        } catch (RuntimeException exception) {
+            log.warn("could not resolve Langfuse credentials for the request; using deployment keys", exception);
+            return globalTracer;
+        }
+    }
+
+    private TracerHandle build(
+            SpanExporter testExporter,
+            String baseUrl,
+            String publicKey,
+            String secretKey) {
+        GovernanceProperties.LangfuseProperties langfuse = properties.getLangfuse();
+        SpanExporter exporter = testExporter != null
+                ? testExporter
+                : OtlpHttpSpanExporter.builder()
+                        .setEndpoint(endpoint(baseUrl))
+                        .addHeader("Authorization", basic(publicKey, secretKey))
+                        .addHeader("x-langfuse-ingestion-version", "4")
+                        .setTimeout(Duration.ofSeconds(Math.max(1, langfuse.getTimeoutSeconds())))
+                        .build();
+        SpanProcessor processor = testExporter != null
+                ? SimpleSpanProcessor.create(exporter)
+                : BatchSpanProcessor.builder(exporter)
+                        .setMaxQueueSize(Math.max(1, langfuse.getQueueCapacity()))
+                        .setScheduleDelay(Duration.ofSeconds(1))
+                        .setExporterTimeout(Duration.ofSeconds(Math.max(1, langfuse.getTimeoutSeconds())))
+                        .build();
+        SdkTracerProvider provider = SdkTracerProvider.builder()
+                .setResource(Resource.getDefault().merge(Resource.create(Attributes.of(
+                        AttributeKey.stringKey("service.name"), "ai-runtime-governance",
+                        AttributeKey.stringKey("service.version"), "0.1.0"))))
+                .addSpanProcessor(processor)
+                .build();
+        return new TracerHandle(provider, provider.get("local.governance.gateway"));
+    }
+
+    private void guardrailSpan(Tracer tracer, Observation observation) {
         Span guard = tracer.spanBuilder("prompt-guard")
                 .setParent(Context.current())
                 .setSpanKind(SpanKind.INTERNAL)
@@ -279,10 +357,22 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
         return value == null || value.isBlank();
     }
 
+    private static String fingerprint(String accessKey, String secret) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest((accessKey + "\u0000" + secret).getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
     @PreDestroy
     public void shutdown() {
-        if (provider != null) {
-            provider.shutdown().join(5, TimeUnit.SECONDS);
+        for (SdkTracerProvider tracerProvider : providers) {
+            tracerProvider.shutdown().join(5, TimeUnit.SECONDS);
         }
+        providers.clear();
+        ownerTracers.clear();
     }
 }

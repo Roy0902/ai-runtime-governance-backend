@@ -36,6 +36,7 @@ class GatewayCredentialServiceTest {
     private AppUserService users;
     private SecureTokenService tokens;
     private GovernanceProperties properties;
+    private local.governance.group.GroupRepository groups;
     private GatewayCredentialService service;
 
     @BeforeEach
@@ -44,8 +45,9 @@ class GatewayCredentialServiceTest {
         users = mock(AppUserService.class);
         tokens = new SecureTokenService();
         properties = new GovernanceProperties();
+        groups = mock(local.governance.group.GroupRepository.class);
         service = new GatewayCredentialService(
-                credentials, users, tokens, properties, Clock.fixed(NOW, ZoneOffset.UTC));
+                credentials, users, tokens, properties, groups, Clock.fixed(NOW, ZoneOffset.UTC));
         when(users.requireActive(accountId)).thenReturn(account("ACTIVE", "GRANTED"));
         when(users.requireGatewayEntitled(accountId)).thenReturn(account("ACTIVE", "GRANTED"));
         when(users.findById(accountId)).thenReturn(Optional.of(account("ACTIVE", "GRANTED")));
@@ -72,7 +74,7 @@ class GatewayCredentialServiceTest {
     @Test
     void listingNeverReturnsTheSecret() {
         Row row = new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                new byte[32], "arg_gw_abcdef", NOW, null, null);
+                new byte[32], "arg_gw_abcdef", NOW, null, null, null);
         when(credentials.forAccount(accountId)).thenReturn(List.of(row));
 
         List<GatewayCredentialService.Summary> summaries = service.list(accountId);
@@ -113,7 +115,7 @@ class GatewayCredentialServiceTest {
     void refusesDuplicateActiveNames() {
         when(credentials.activeByName(accountId, "laptop")).thenReturn(Optional.of(
                 new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                        new byte[32], "arg_gw_abcdef", NOW, null, null)));
+                        new byte[32], "arg_gw_abcdef", NOW, null, null, null)));
 
         APIException exception = assertThrows(
                 APIException.class,
@@ -136,7 +138,7 @@ class GatewayCredentialServiceTest {
     void authenticatesAnActiveKeyAndRefreshesItsLastUsedTime() {
         String token = "arg_gw_secret";
         Row row = new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                tokens.hash(token), "arg_gw_secret", NOW, null, null);
+                tokens.hash(token), "arg_gw_secret", NOW, null, null, null);
         when(credentials.activeByHash(tokens.hash(token))).thenReturn(Optional.of(row));
 
         GatewayCredentialService.Principal principal = service.authenticate(token);
@@ -161,7 +163,7 @@ class GatewayCredentialServiceTest {
     void rejectsAKeyWhoseAccountLostGatewayPermission() {
         String token = "arg_gw_secret";
         Row row = new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                tokens.hash(token), "arg_gw_secret", NOW, null, null);
+                tokens.hash(token), "arg_gw_secret", NOW, null, null, null);
         when(credentials.activeByHash(tokens.hash(token))).thenReturn(Optional.of(row));
         when(users.findById(accountId)).thenReturn(Optional.of(account("ACTIVE", "REVOKED")));
 

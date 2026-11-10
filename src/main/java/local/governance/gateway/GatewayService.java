@@ -35,6 +35,8 @@ public class GatewayService {
     private record Prepared(
             UUID traceId,
             UUID scopeId,
+            UUID accountId,
+            UUID groupId,
             UUID credentialId,
             String conversationKey,
             String clientConversationId,
@@ -279,6 +281,8 @@ public class GatewayService {
         return new Prepared(
                 traceId,
                 principal.scopeId(),
+                principal.accountId(),
+                principal.groupId(),
                 principal.credentialId(),
                 conversationKey,
                 clientConversationId,
@@ -306,6 +310,8 @@ public class GatewayService {
                 return new Prepared(
                         traceId,
                         principal.scopeId(),
+                        principal.accountId(),
+                        principal.groupId(),
                         principal.credentialId(),
                         conversationKey,
                         clientConversationId,
@@ -333,6 +339,8 @@ public class GatewayService {
         return new Prepared(
                 conversation.traceId(),
                 principal.scopeId(),
+                principal.accountId(),
+                principal.groupId(),
                 principal.credentialId(),
                 conversationKey,
                 clientConversationId,
@@ -476,6 +484,8 @@ public class GatewayService {
             try {
                 exporter.export(new GatewayObservationExporter.Observation(
                         prepared.scopeId(),
+                        prepared.accountId(),
+                        prepared.groupId(),
                         prepared.traceId(),
                         prepared.conversationKey(),
                         prepared.model(),

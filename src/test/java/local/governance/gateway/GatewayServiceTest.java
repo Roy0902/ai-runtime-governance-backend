@@ -44,7 +44,7 @@ class GatewayServiceTest {
 
     private final UUID scopeId = UUID.randomUUID();
     private final UUID credentialId = UUID.randomUUID();
-    private final Principal principal = new Principal(credentialId, UUID.randomUUID(), scopeId);
+    private final Principal principal = new Principal(credentialId, UUID.randomUUID(), scopeId, null);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private GovernanceProperties properties;

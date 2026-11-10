@@ -63,6 +63,8 @@ governance:
     max-members: ${GOVERNANCE_TIMELINE_MAX_MEMBERS:10000}
     max-active: ${GOVERNANCE_TIMELINE_MAX_ACTIVE:5}
     ttl-seconds: ${GOVERNANCE_TIMELINE_TTL_SECONDS:300}
+  credentials:
+    key-dir: ${GOVERNANCE_CREDENTIAL_KEY_DIR:${user.home}/.arg/keys}
   langfuse:
     enabled: ${LANGFUSE_ENABLED:false}
     base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}

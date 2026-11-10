@@ -7,6 +7,7 @@ import local.governance.api.APIException;
 import local.governance.authentication.crypto.SecureTokenService;
 import local.governance.config.GovernanceProperties;
 import local.governance.gateway.GatewayCredentialRepository.Row;
+import local.governance.group.GroupRepository;
 import local.governance.security.AppUserService;
 import local.governance.security.AppUserService.AppUser;
 import org.springframework.stereotype.Service;
@@ -24,7 +25,8 @@ public class GatewayCredentialService {
             String tokenPrefix,
             java.time.Instant createdAt,
             java.time.Instant lastUsedAt,
-            java.time.Instant revokedAt) {}
+            java.time.Instant revokedAt,
+            UUID groupId) {}
 
     public record Issued(
             UUID id,
@@ -32,12 +34,13 @@ public class GatewayCredentialService {
             String token,
             java.time.Instant createdAt) {}
 
-    public record Principal(UUID credentialId, UUID accountId, UUID scopeId) {}
+    public record Principal(UUID credentialId, UUID accountId, UUID scopeId, UUID groupId) {}
 
     private final GatewayCredentialRepository credentials;
     private final AppUserService users;
     private final SecureTokenService tokens;
     private final GovernanceProperties properties;
+    private final GroupRepository groups;
     private final Clock clock;
 
     public GatewayCredentialService(
@@ -45,11 +48,13 @@ public class GatewayCredentialService {
             AppUserService users,
             SecureTokenService tokens,
             GovernanceProperties properties,
+            GroupRepository groups,
             Clock clock) {
         this.credentials = credentials;
         this.users = users;
         this.tokens = tokens;
         this.properties = properties;
+        this.groups = groups;
         this.clock = clock;
     }
 
@@ -62,13 +67,30 @@ public class GatewayCredentialService {
                         row.tokenPrefix(),
                         row.createdAt(),
                         row.lastUsedAt(),
-                        row.revokedAt()))
+                        row.revokedAt(),
+                        row.groupId()))
                 .toList();
     }
 
     @Transactional
     public Issued issue(UUID appUserId, String name) {
-        AppUser user = users.requireGatewayEntitled(appUserId);
+        return issue(appUserId, null, name);
+    }
+
+    @Transactional
+    public Issued issue(UUID appUserId, UUID groupId, String name) {
+        AppUser user;
+        if (groupId == null) {
+            user = users.requireGatewayEntitled(appUserId);
+        } else {
+            user = users.requireActive(appUserId);
+            if (!groups.isMember(groupId, appUserId)) {
+                throw new APIException("GROUP_ACCESS_DENIED", "You are not a member of this group.");
+            }
+            if (user.scopeId() == null) {
+                throw new APIException("GATEWAY_NOT_ENTITLED", "This account has no private scope.");
+            }
+        }
         String normalized = normalizeName(name);
         if (credentials.activeByName(appUserId, normalized).isPresent()) {
             throw new APIException("GATEWAY_KEY_EXISTS", "Revoke the existing key with that name first.");
@@ -90,7 +112,8 @@ public class GatewayCredentialService {
                 token.substring(0, prefixLength),
                 createdAt,
                 null,
-                null));
+                null,
+                groupId));
         return new Issued(id, normalized, token, createdAt);
     }
 
@@ -113,13 +136,17 @@ public class GatewayCredentialService {
                 .filter(row -> "ACTIVE".equals(row.status()))
                 .filter(row -> credential.scopeId().equals(row.scopeId()))
                 .orElseThrow(GatewayCredentialService::invalidCredential);
-        if (!"GRANTED".equals(user.gatewayEntitlement())) {
-            throw new APIException(
-                    "GATEWAY_NOT_ENTITLED",
-                    "This account is not permitted to use the model gateway.");
+        if (credential.groupId() == null) {
+            if (!"GRANTED".equals(user.gatewayEntitlement())) {
+                throw new APIException(
+                        "GATEWAY_NOT_ENTITLED",
+                        "This account is not permitted to use the model gateway.");
+            }
+        } else if (!groups.isMember(credential.groupId(), user.id())) {
+            throw new APIException("GROUP_ACCESS_DENIED", "You are not a member of this group.");
         }
         credentials.markUsed(credential.id(), clock.instant());
-        return new Principal(credential.id(), user.id(), user.scopeId());
+        return new Principal(credential.id(), user.id(), user.scopeId(), credential.groupId());
     }
 
     private static String normalizeName(String name) {
