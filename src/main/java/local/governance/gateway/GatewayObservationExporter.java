@@ -12,6 +12,8 @@ public interface GatewayObservationExporter {
 
     record Observation(
             UUID scopeId,
+            UUID accountId,
+            UUID groupId,
             UUID traceId,
             String sessionId,
             String model,

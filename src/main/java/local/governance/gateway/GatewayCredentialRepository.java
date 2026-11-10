@@ -23,7 +23,8 @@ public class GatewayCredentialRepository {
             String tokenPrefix,
             Instant createdAt,
             Instant lastUsedAt,
-            Instant revokedAt) {}
+            Instant revokedAt,
+            UUID groupId) {}
 
     private final JdbcClient jdbc;
 
@@ -42,8 +43,8 @@ public class GatewayCredentialRepository {
     public void insert(Row row) {
         jdbc.sql("""
                 INSERT INTO gateway_credential (
-                    id, account_id, scope_id, name, token_hash, token_prefix, created_at)
-                VALUES (:id, :account, :scope, :name, :tokenHash, :prefix, :createdAt)
+                    id, account_id, scope_id, name, token_hash, token_prefix, created_at, group_id)
+                VALUES (:id, :account, :scope, :name, :tokenHash, :prefix, :createdAt, :groupId)
                 """)
                 .param("id", row.id())
                 .param("account", row.accountId())
@@ -52,6 +53,7 @@ public class GatewayCredentialRepository {
                 .param("tokenHash", row.tokenHash())
                 .param("prefix", row.tokenPrefix())
                 .param("createdAt", ts(row.createdAt()))
+                .param("groupId", row.groupId())
                 .update();
     }
 
@@ -118,6 +120,17 @@ public class GatewayCredentialRepository {
                 .update();
     }
 
+    public int revokeForGroupMember(UUID groupId, UUID accountId, Instant now) {
+        return jdbc.sql("""
+                UPDATE gateway_credential SET revoked_at = :now
+                WHERE group_id = :group AND account_id = :account AND revoked_at IS NULL
+                """)
+                .param("group", groupId)
+                .param("account", accountId)
+                .param("now", ts(now))
+                .update();
+    }
+
     public void deleteAll() {
         jdbc.sql("DELETE FROM gateway_credential").update();
     }
@@ -132,6 +145,7 @@ public class GatewayCredentialRepository {
                 rs.getString("token_prefix"),
                 instant(rs.getObject("created_at", OffsetDateTime.class)),
                 instant(rs.getObject("last_used_at", OffsetDateTime.class)),
-                instant(rs.getObject("revoked_at", OffsetDateTime.class)));
+                instant(rs.getObject("revoked_at", OffsetDateTime.class)),
+                rs.getObject("group_id", UUID.class));
     }
 }
