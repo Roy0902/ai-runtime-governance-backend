@@ -57,6 +57,8 @@ governance:
     requests-per-minute: ${GOVERNANCE_GATEWAY_REQUESTS_PER_MINUTE:60}
     allow-unguarded-continuation: ${GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION:false}
     force-stream-usage: ${GOVERNANCE_GATEWAY_FORCE_STREAM_USAGE:false}
+  credentials:
+    key-dir: ${GOVERNANCE_CREDENTIAL_KEY_DIR:${user.home}/.arg/keys}
   langfuse:
     enabled: ${LANGFUSE_ENABLED:false}
     base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
