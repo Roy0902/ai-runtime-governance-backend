@@ -4,6 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.opentelemetry.api.common.AttributeKey;
@@ -11,9 +15,12 @@ import java.math.BigDecimal;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import local.governance.config.GovernanceProperties;
 import local.governance.gateway.GatewayObservationExporter.Observation;
+import local.governance.provider.ProviderCredentialService;
+import local.governance.provider.ProviderKind;
 import org.junit.jupiter.api.Test;
 
 class LangfuseObservationExporterTest {
@@ -26,10 +33,13 @@ class LangfuseObservationExporterTest {
     @Test
     void exportsARedactedGenerationWithSessionAndUsage() {
         UUID scopeId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
         UUID traceId = UUID.randomUUID();
 
         String observationId = exporter.export(new GatewayObservationExporter.Observation(
                 scopeId,
+                accountId,
+                null,
                 traceId,
                 "conversation-key",
                 "gpt-4o",
@@ -96,9 +106,50 @@ class LangfuseObservationExporterTest {
                 generations.stream().map(SpanData::getSpanId).distinct().count());
     }
 
+    @Test
+    void resolvesAMemberGroupCredentialBeforeDeploymentKeys() {
+        ProviderCredentialService credentials = mock(ProviderCredentialService.class);
+        LangfuseObservationExporter groupExporter =
+                new LangfuseObservationExporter(properties, new ObjectMapper(), inMemory, credentials);
+        UUID accountId = UUID.randomUUID();
+        UUID groupId = UUID.randomUUID();
+        UUID traceId = UUID.randomUUID();
+        when(credentials.resolveForGroup(groupId, ProviderKind.LANGFUSE))
+                .thenReturn(Optional.of(new ProviderCredentialService.Resolved("lf-public", "lf-secret")));
+
+        String observationId = groupExporter.export(new Observation(
+                UUID.randomUUID(),
+                accountId,
+                groupId,
+                traceId,
+                "conversation-key",
+                "gpt-4o",
+                "prompt",
+                "output",
+                "completed",
+                1,
+                1,
+                null,
+                null,
+                2,
+                null,
+                null,
+                "stop",
+                10,
+                "allow"));
+
+        assertNotNull(observationId);
+        verify(credentials).resolveForGroup(groupId, ProviderKind.LANGFUSE);
+        verify(credentials, never()).resolve(accountId, ProviderKind.LANGFUSE);
+        assertEquals(traceId.toString().replace("-", ""), span(inMemory.getFinishedSpanItems(), "chat gpt-4o").getTraceId());
+        groupExporter.shutdown();
+    }
+
     private static Observation observation(UUID traceId) {
         return new Observation(
                 UUID.randomUUID(),
+                UUID.randomUUID(),
+                null,
                 traceId,
                 "conversation-key",
                 "gpt-4o",
@@ -124,7 +175,7 @@ class LangfuseObservationExporterTest {
                 new LangfuseObservationExporter(disabled, new ObjectMapper());
 
         assertNull(noKeys.export(new GatewayObservationExporter.Observation(
-                UUID.randomUUID(), UUID.randomUUID(), null, "gpt-4o", null, "x",
+                UUID.randomUUID(), UUID.randomUUID(), null, UUID.randomUUID(), null, "gpt-4o", null, "x",
                 "completed", null, null, null, null, null, null, null, null, 1, "allow")));
         noKeys.shutdown();
 

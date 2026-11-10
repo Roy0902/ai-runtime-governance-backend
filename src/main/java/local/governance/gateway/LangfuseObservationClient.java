@@ -49,6 +49,7 @@ public class LangfuseObservationClient {
     private final ObjectMapper objectMapper;
     private final HttpClient http;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public LangfuseObservationClient(GovernanceProperties properties, ObjectMapper objectMapper) {
         this(properties, objectMapper, HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(Math.max(1, properties.getLangfuse().getTimeoutSeconds())))
