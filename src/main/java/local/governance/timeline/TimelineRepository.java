@@ -55,7 +55,8 @@ public class TimelineRepository {
             List<String> ruleIds,
             UUID approvalId,
             String approvalState,
-            String observedStatus) {}
+            String observedStatus,
+            String content) {}
 
     public record TraversalRow(
             UUID id,
@@ -224,13 +225,14 @@ public class TimelineRepository {
                     id, trace_id, scope_id, parent_event_id, kind, received_at,
                     source_at, duration_ms, identity, label, guard_outcome,
                     policy_id, policy_version, rule_ids, approval_id,
-                    approval_state, observed_status)
+                    approval_state, observed_status, content)
                 VALUES (
                     :id, :trace, :scope, :parent, :kind, :receivedAt,
                     :sourceAt, :durationMs, :identity, :label, :guardOutcome,
                     :policyId, :policyVersion,
                     CASE WHEN :rules = '' THEN ARRAY[]::text[] ELSE string_to_array(:rules, ',') END,
-                    :approvalId, :approvalState, :observedStatus)
+                    :approvalId, :approvalState, :observedStatus,
+                    CAST(:content AS jsonb))
                 """)
                 .param("id", row.id())
                 .param("trace", row.traceId())
@@ -249,6 +251,7 @@ public class TimelineRepository {
                 .param("approvalId", row.approvalId())
                 .param("approvalState", row.approvalState())
                 .param("observedStatus", row.observedStatus())
+                .param("content", row.content())
                 .update();
     }
 
@@ -279,6 +282,19 @@ public class TimelineRepository {
                 .param("limit", limit)
                 .query((rs, rowNum) -> rs.getObject("id", UUID.class))
                 .list();
+    }
+
+    public Optional<UUID> latestPromptEventId(UUID scopeId, UUID traceId) {
+        return jdbc.sql("""
+                SELECT id FROM activity_event
+                WHERE scope_id = :scope AND trace_id = :trace AND kind = 'prompt'
+                ORDER BY received_at DESC, id DESC
+                LIMIT 1
+                """)
+                .param("scope", scopeId)
+                .param("trace", traceId)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
+                .optional();
     }
 
     public List<UUID> eventIds(UUID scopeId, UUID traceId, int limit) {
@@ -449,13 +465,14 @@ public class TimelineRepository {
                     id, trace_id, scope_id, parent_event_id, kind, received_at,
                     source_at, duration_ms, identity, label, guard_outcome,
                     policy_id, policy_version, rule_ids, approval_id,
-                    approval_state, observed_status, content_hash)
+                    approval_state, observed_status, content_hash, content)
                 VALUES (
                     :id, :trace, :scope, :parent, :kind, :receivedAt,
                     :sourceAt, :durationMs, :identity, :label, :guardOutcome,
                     :policyId, :policyVersion,
                     CASE WHEN :rules = '' THEN ARRAY[]::text[] ELSE string_to_array(:rules, ',') END,
-                    :approvalId, :approvalState, :observedStatus, :contentHash)
+                    :approvalId, :approvalState, :observedStatus, :contentHash,
+                    CAST(:content AS jsonb))
                 """)
                 .param("id", row.id())
                 .param("trace", row.traceId())
@@ -475,6 +492,7 @@ public class TimelineRepository {
                 .param("approvalState", row.approvalState())
                 .param("observedStatus", row.observedStatus())
                 .param("contentHash", contentHash)
+                .param("content", row.content())
                 .update();
     }
 
@@ -521,7 +539,8 @@ public class TimelineRepository {
                 rules(rs, "rule_ids"),
                 rs.getObject("approval_id", UUID.class),
                 rs.getString("approval_state"),
-                rs.getString("observed_status"));
+                rs.getString("observed_status"),
+                rs.getString("content"));
     }
 
     private static TraversalRow mapTraversal(ResultSet rs, int rowNum) throws SQLException {

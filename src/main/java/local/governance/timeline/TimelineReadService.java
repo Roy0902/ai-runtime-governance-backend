@@ -1,5 +1,6 @@
 package local.governance.timeline;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.time.Duration;
@@ -41,6 +42,7 @@ public class TimelineReadService {
     private final TestFaultRegistry faults;
     private final GovernanceProperties properties;
     private final Clock clock;
+    private final ObjectMapper objectMapper;
 
     public TimelineReadService(
             AppUserService users,
@@ -48,13 +50,15 @@ public class TimelineReadService {
             EventUsageLookup usage,
             TestFaultRegistry faults,
             GovernanceProperties properties,
-            Clock clock) {
+            Clock clock,
+            ObjectMapper objectMapper) {
         this.users = users;
         this.timeline = timeline;
         this.usage = usage;
         this.faults = faults;
         this.properties = properties;
         this.clock = clock;
+        this.objectMapper = objectMapper;
     }
 
     public TracePageResponse traces(HttpServletRequest request, String cursor) {
@@ -272,7 +276,7 @@ public class TimelineReadService {
                         : null);
     }
 
-    private static ActivityEventResponse event(EventRow row, ModelUsageSummaryResponse usage) {
+    private ActivityEventResponse event(EventRow row, ModelUsageSummaryResponse usage) {
         String relationship = row.parentEventId() == null
                 ? "root"
                 : row.parentExists() ? "linked" : "unresolved";
@@ -300,11 +304,23 @@ public class TimelineReadService {
                 row.identity(),
                 metadata,
                 usage,
+                content(row.content()),
                 false);
+    }
+
+    private Object content(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(value, Object.class);
+        } catch (Exception exception) {
+            return null;
+        }
     }
 
     private static ActivityEventResponse tombstoneEvent(UUID traceId, UUID eventId) {
         return new ActivityEventResponse(
-                eventId, traceId, null, null, null, null, null, null, null, null, null, true);
+                eventId, traceId, null, null, null, null, null, null, null, null, null, null, true);
     }
 }

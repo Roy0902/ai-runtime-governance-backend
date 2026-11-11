@@ -24,7 +24,7 @@ public class GatewayTurnRecorder {
     }
 
     @Transactional
-    public void recordGuardedTurn(
+    public UUID recordGuardedTurn(
             UUID scopeId,
             UUID traceId,
             String model,
@@ -33,18 +33,21 @@ public class GatewayTurnRecorder {
             String policyVersion,
             List<String> ruleIds,
             String conversationKey,
-            String guardedMessageHash) {
-        traces.beginGuardedTurn(scopeId, traceId, model, outcome, policyId, policyVersion, ruleIds);
+            String guardedMessageHash,
+            String promptContent) {
+        UUID promptId = traces.beginGuardedTurn(
+                scopeId, traceId, model, outcome, policyId, policyVersion, ruleIds, promptContent);
         conversations.record(
                 scopeId,
                 traceId,
                 conversationKey,
                 guardedMessageHash,
                 outcome.name().toLowerCase(java.util.Locale.ROOT));
+        return promptId;
     }
 
     @Transactional
-    public void recordBypassedTurn(UUID scopeId, UUID traceId, String model) {
-        traces.beginBypassedTurn(scopeId, traceId, model);
+    public UUID recordBypassedTurn(UUID scopeId, UUID traceId, String model, String promptContent) {
+        return traces.beginBypassedTurn(scopeId, traceId, model, promptContent);
     }
 }

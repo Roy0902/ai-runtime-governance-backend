@@ -116,7 +116,8 @@ public class TimelineTestController {
                 event.ruleIds() == null ? List.of() : event.ruleIds(),
                 event.approvalId(),
                 event.approvalState(),
-                event.observedStatus()));
+                event.observedStatus(),
+                null));
     }
 
     private UUID scope(String email) {

@@ -19,4 +19,5 @@ public record ActivityEventResponse(
         String identity,
         EventMetadataResponse metadata,
         ModelUsageSummaryResponse usage,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Object content,
         @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean tombstone) {}

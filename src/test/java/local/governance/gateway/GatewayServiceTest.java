@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -124,11 +125,12 @@ class GatewayServiceTest {
                 eq(GatewayGuardrail.POLICY_VERSION),
                 eq(List.of()),
                 eq("conversation-key"),
-                eq("message-hash"));
+                eq("message-hash"),
+                anyString());
         ArgumentCaptor<UUID> completedEvent = ArgumentCaptor.forClass(UUID.class);
         verify(traces).complete(
                 eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("completed"), eq("stop"),
-                anyInt(), completedEvent.capture());
+                anyInt(), completedEvent.capture(), any(), anyString(), anyList());
 
         ArgumentCaptor<ModelUsageRecorder.Usage> recorded =
                 ArgumentCaptor.forClass(ModelUsageRecorder.Usage.class);
@@ -216,7 +218,8 @@ class GatewayServiceTest {
                 eq(GatewayGuardrail.POLICY_ID),
                 eq(GatewayGuardrail.POLICY_VERSION),
                 eq(List.of("FX-DENY")),
-                eq(false));
+                eq(false),
+                anyString());
         verifyNoInteractions(upstream, turnRecorder);
     }
 
@@ -250,7 +253,7 @@ class GatewayServiceTest {
         assertEquals("GUARD_EVALUATION_FAILED", exception.code());
         verify(traces).blocked(
                 eq(scopeId), any(UUID.class), eq("gpt-4o"), isNull(), anyString(), anyString(),
-                eq(List.of()), eq(true));
+                eq(List.of()), eq(true), anyString());
         verifyNoInteractions(upstream);
     }
 
@@ -311,9 +314,9 @@ class GatewayServiceTest {
                 sent.path("messages").path(0).path("content").asText());
         verify(traces).complete(
                 eq(scopeId), eq(traceId), eq("gpt-4o"), eq("completed"), isNull(),
-                anyInt(), any(UUID.class));
+                anyInt(), any(UUID.class), any(), anyString(), anyList());
         verify(turnRecorder, never()).recordGuardedTurn(
-                any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -334,7 +337,7 @@ class GatewayServiceTest {
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("slow down"));
         verify(traces).complete(
                 eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("failed"), isNull(),
-                anyInt(), any(UUID.class));
+                anyInt(), any(UUID.class), any(), anyString(), anyList());
     }
 
     @Test
