@@ -62,6 +62,7 @@ public class GatewayService {
     private final GatewayOutputPersistence outputPersistence;
     private final GatewayRateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
+    private final ContentSanitizer sanitizer;
     private final Optional<GatewayObservationExporter> observationExporter;
 
     public GatewayService(
@@ -92,6 +93,7 @@ public class GatewayService {
         this.outputPersistence = outputPersistence;
         this.rateLimiter = rateLimiter;
         this.objectMapper = objectMapper;
+        this.sanitizer = new ContentSanitizer(objectMapper);
         this.observationExporter = observationExporter;
     }
 
@@ -511,7 +513,7 @@ public class GatewayService {
         Map<String, Object> content = new LinkedHashMap<>();
         content.put("text", text);
         try {
-            return objectMapper.writeValueAsString(content);
+            return sanitizer.clean(objectMapper.writeValueAsString(content));
         } catch (JsonProcessingException exception) {
             return null;
         }
@@ -534,7 +536,7 @@ public class GatewayService {
                     .toList());
         }
         try {
-            return objectMapper.writeValueAsString(content);
+            return sanitizer.clean(objectMapper.writeValueAsString(content));
         } catch (JsonProcessingException exception) {
             return null;
         }

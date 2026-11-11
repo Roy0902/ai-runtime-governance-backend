@@ -52,6 +52,7 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
 
     private final GovernanceProperties properties;
     private final ObjectMapper objectMapper;
+    private final ContentSanitizer sanitizer;
     private final ProviderCredentialService credentials;
     private final SpanExporter testExporter;
     private final Tracer globalTracer;
@@ -87,6 +88,7 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
             ProviderCredentialService credentials) {
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.sanitizer = new ContentSanitizer(objectMapper);
         this.credentials = credentials;
         this.testExporter = testExporter;
         this.testMode = testExporter != null;
@@ -176,11 +178,12 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
 
         if (langfuse.isCaptureInput() && observation.prompt() != null) {
             span.setAttribute("langfuse.observation.input",
-                    truncate(input(observation.prompt()), properties.getGateway().getMaxCaptureBytes()));
+                    truncate(sanitizer.clean(input(observation.prompt())), properties.getGateway().getMaxCaptureBytes()));
         }
         if (langfuse.isCaptureOutput() && observation.output() != null) {
             span.setAttribute("langfuse.observation.output",
-                    truncate(observation.output(), properties.getGateway().getMaxCaptureBytes()));
+                    truncate(ContentSanitizer.cleanText(observation.output()),
+                            properties.getGateway().getMaxCaptureBytes()));
         }
         if (observation.inputTokens() != null
                 || observation.outputTokens() != null

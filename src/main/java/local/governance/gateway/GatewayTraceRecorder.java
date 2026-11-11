@@ -29,11 +29,13 @@ public class GatewayTraceRecorder {
     private final TimelineRepository timeline;
     private final Clock clock;
     private final ObjectMapper objectMapper;
+    private final ContentSanitizer sanitizer;
 
     public GatewayTraceRecorder(TimelineRepository timeline, Clock clock, ObjectMapper objectMapper) {
         this.timeline = timeline;
         this.clock = clock;
         this.objectMapper = objectMapper;
+        this.sanitizer = new ContentSanitizer(objectMapper);
     }
 
     @Transactional
@@ -250,7 +252,7 @@ public class GatewayTraceRecorder {
         content.put("name", call.name());
         content.put("arguments", call.arguments());
         try {
-            return objectMapper.writeValueAsString(content);
+            return sanitizer.clean(objectMapper.writeValueAsString(content));
         } catch (JsonProcessingException exception) {
             return null;
         }
