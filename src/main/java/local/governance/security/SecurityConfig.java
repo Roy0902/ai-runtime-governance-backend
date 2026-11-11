@@ -27,14 +27,20 @@ public class SecurityConfig {
 
     @Bean
     @ConditionalOnProperty(name = "governance.iam.mode", havingValue = "native", matchIfMissing = true)
-    SecurityFilterChain nativeSecurityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain nativeSecurityFilterChain(
+            HttpSecurity http,
+            SessionService sessions,
+            AppUserService users) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement((session) -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests((authorize) -> authorize.anyRequest().permitAll())
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
-                .logout(AbstractHttpConfigurer::disable);
+                .logout(AbstractHttpConfigurer::disable)
+                .addFilterAfter(
+                        new NativeSessionAuthenticationFilter(sessions, users),
+                        SecurityContextHolderFilter.class);
         return http.build();
     }
 
