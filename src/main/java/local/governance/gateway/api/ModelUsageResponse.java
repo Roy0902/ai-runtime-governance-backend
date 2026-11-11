@@ -10,6 +10,7 @@ import java.util.UUID;
 public record ModelUsageResponse(
         UUID id,
         UUID traceId,
+        UUID eventId,
         UUID credentialId,
         String clientConversationId,
         String clientUserAgent,
@@ -45,5 +46,6 @@ public record ModelUsageResponse(
         String errorMessage,
         Map<String, Object> providerUsage,
         Map<String, String> responseHeaders,
+        String langfuseObservationId,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSX", timezone = "UTC")
         Instant receivedAt) {}

@@ -143,10 +143,11 @@ public class GatewayTraceRecorder {
             String model,
             String status,
             String finishReason,
-            Integer durationMs) {
+            Integer durationMs,
+            UUID eventId) {
         Instant now = clock.instant();
         timeline.insertEvent(new EventRow(
-                UUID.randomUUID(),
+                eventId,
                 traceId,
                 scopeId,
                 null,

@@ -77,9 +77,9 @@ governance:
   pricing:
     models:
       # Example; add the models your deployment actually uses.
+      # All prices are USD.
       # gpt-4o:
       #   input-per-million: 2.50
       #   output-per-million: 10.00
       #   cached-input-per-million: 1.25
       #   reasoning-output-per-million: 10.00
-      #   currency: USD

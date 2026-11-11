@@ -31,5 +31,9 @@ public interface GatewayObservationExporter {
             long durationMs,
             String guardOutcome) {}
 
-    void export(Observation observation);
+    /**
+     * @return the external observation id, or {@code null} when export is
+     *     disabled or misconfigured
+     */
+    String export(Observation observation);
 }

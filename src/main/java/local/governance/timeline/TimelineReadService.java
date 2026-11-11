@@ -4,6 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -15,6 +17,7 @@ import local.governance.api.CoverageResponse;
 import local.governance.api.EventMetadataResponse;
 import local.governance.api.EventPageResponse;
 import local.governance.api.LossResponse;
+import local.governance.api.ModelUsageSummaryResponse;
 import local.governance.api.TraceDetailResponse;
 import local.governance.api.TracePageResponse;
 import local.governance.api.TraceSummaryResponse;
@@ -34,6 +37,7 @@ public class TimelineReadService {
 
     private final AppUserService users;
     private final TimelineRepository timeline;
+    private final EventUsageLookup usage;
     private final TestFaultRegistry faults;
     private final GovernanceProperties properties;
     private final Clock clock;
@@ -41,11 +45,13 @@ public class TimelineReadService {
     public TimelineReadService(
             AppUserService users,
             TimelineRepository timeline,
+            EventUsageLookup usage,
             TestFaultRegistry faults,
             GovernanceProperties properties,
             Clock clock) {
         this.users = users;
         this.timeline = timeline;
+        this.usage = usage;
         this.faults = faults;
         this.properties = properties;
         this.clock = clock;
@@ -76,6 +82,50 @@ public class TimelineReadService {
             return startEvents(scope, traceId);
         }
         return continueEvents(scope, traceId, cursor);
+    }
+
+    /**
+     * Live trace polling. Returns only traces received after the supplied
+     * cursor, newest first, without creating a traversal row.
+     */
+    public TracePageResponse liveTraces(HttpServletRequest request, String since) {
+        failIfInjected();
+        UUID scope = scope(request);
+        LiveCursor cursor = LiveCursor.decode(since);
+        List<UUID> members;
+        if (cursor == null) {
+            members = timeline.traceIds(scope, TRACE_PAGE_SIZE);
+        } else {
+            members = new ArrayList<>(
+                    timeline.traceIdsAfter(scope, cursor.receivedAt(), cursor.id(), TRACE_PAGE_SIZE));
+            Collections.reverse(members);
+        }
+        Map<UUID, TraceRow> rows = timeline.tracesByIds(scope, members).stream()
+                .collect(Collectors.toMap(TraceRow::id, Function.identity()));
+        List<TraceSummaryResponse> items = members.stream()
+                .map((id) -> rows.containsKey(id) ? summary(rows.get(id)) : tombstoneTrace(id))
+                .toList();
+        return new TracePageResponse(items, null);
+    }
+
+    /**
+     * Live event polling. Returns only events received after the supplied
+     * cursor, oldest first, without creating a traversal row.
+     */
+    public EventPageResponse liveEvents(HttpServletRequest request, String rawTraceId, String since) {
+        failIfInjected();
+        UUID scope = scope(request);
+        UUID traceId = traceId(rawTraceId);
+        timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
+        LiveCursor cursor = LiveCursor.decode(since);
+        List<EventRow> rows = cursor == null
+                ? timeline.events(scope, traceId, EVENT_PAGE_SIZE)
+                : timeline.eventsAfter(scope, traceId, cursor.receivedAt(), cursor.id(), EVENT_PAGE_SIZE);
+        Map<UUID, ModelUsageSummaryResponse> usageByEvent = usage.byEvent(scope, traceId);
+        List<ActivityEventResponse> items = rows.stream()
+                .map((row) -> event(row, usageByEvent.get(row.id())))
+                .toList();
+        return new EventPageResponse(items, null);
     }
 
     private TracePageResponse startTraces(UUID scope) {
@@ -139,15 +189,10 @@ public class TimelineReadService {
     }
 
     private void purgeAndCheck(UUID scope) {
-        Instant now = clock.instant();
-        timeline.deleteExpired(scope, now);
-        int active = timeline.activeTraversals(scope, now);
-        if (active >= properties.getTimeline().getMaxActive()) {
-            int retryAfter = timeline.earliestExpiry(scope, now)
-                    .map((expires) -> (int) Math.max(1, Duration.between(now, expires).toSeconds()))
-                    .orElse(properties.getTimeline().getTtlSeconds());
-            throw APIException.traversalLimit(retryAfter);
-        }
+        // Reads must never be throttled: the timeline is expected to refresh in
+        // real time. Expired traversals are purged here, and the TTL bounds the
+        // number of rows that can remain between reads.
+        timeline.deleteExpired(scope, clock.instant());
     }
 
     private TracePageResponse tracePage(UUID scope, UUID traversalId, List<UUID> members, int position) {
@@ -167,8 +212,11 @@ public class TimelineReadService {
         List<UUID> pageIds = members.subList(position, end);
         Map<UUID, EventRow> rows = timeline.eventsByIds(scope, traceId, pageIds).stream()
                 .collect(Collectors.toMap(EventRow::id, Function.identity()));
+        Map<UUID, ModelUsageSummaryResponse> usageByEvent = usage.byEvent(scope, traceId);
         List<ActivityEventResponse> items = pageIds.stream()
-                .map((id) -> rows.containsKey(id) ? event(rows.get(id)) : tombstoneEvent(traceId, id))
+                .map((id) -> rows.containsKey(id)
+                        ? event(rows.get(id), usageByEvent.get(id))
+                        : tombstoneEvent(traceId, id))
                 .toList();
         String nextCursor = end < members.size() ? TimelineCursor.encode(traversalId, end) : null;
         return new EventPageResponse(items, nextCursor);
@@ -224,7 +272,7 @@ public class TimelineReadService {
                         : null);
     }
 
-    private static ActivityEventResponse event(EventRow row) {
+    private static ActivityEventResponse event(EventRow row, ModelUsageSummaryResponse usage) {
         String relationship = row.parentEventId() == null
                 ? "root"
                 : row.parentExists() ? "linked" : "unresolved";
@@ -251,11 +299,12 @@ public class TimelineReadService {
                 row.durationMs(),
                 row.identity(),
                 metadata,
+                usage,
                 false);
     }
 
     private static ActivityEventResponse tombstoneEvent(UUID traceId, UUID eventId) {
         return new ActivityEventResponse(
-                eventId, traceId, null, null, null, null, null, null, null, null, true);
+                eventId, traceId, null, null, null, null, null, null, null, null, null, true);
     }
 }

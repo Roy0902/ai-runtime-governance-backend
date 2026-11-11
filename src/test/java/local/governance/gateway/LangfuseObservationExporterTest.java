@@ -2,8 +2,10 @@ package local.governance.gateway;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +18,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import local.governance.config.GovernanceProperties;
+import local.governance.gateway.GatewayObservationExporter.Observation;
 import local.governance.provider.ProviderCredentialService;
 import local.governance.provider.ProviderKind;
 import org.junit.jupiter.api.Test;
@@ -30,11 +33,12 @@ class LangfuseObservationExporterTest {
     @Test
     void exportsARedactedGenerationWithSessionAndUsage() {
         UUID scopeId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
         UUID traceId = UUID.randomUUID();
 
-        exporter.export(new GatewayObservationExporter.Observation(
+        String observationId = exporter.export(new GatewayObservationExporter.Observation(
                 scopeId,
-                UUID.randomUUID(),
+                accountId,
                 null,
                 traceId,
                 "conversation-key",
@@ -56,6 +60,8 @@ class LangfuseObservationExporterTest {
         List<SpanData> spans = inMemory.getFinishedSpanItems();
         SpanData generation = span(spans, "chat gpt-4o");
         assertNotNull(generation);
+        assertEquals(generation.getSpanId(), observationId);
+        assertEquals(traceId.toString().replace("-", ""), generation.getTraceId());
         assertEquals("gateway gpt-4o", string(generation, "langfuse.trace.name"));
         assertEquals(scopeId.toString(), string(generation, "langfuse.user.id"));
         assertEquals("conversation-key", string(generation, "langfuse.session.id"));
@@ -72,8 +78,94 @@ class LangfuseObservationExporterTest {
 
         SpanData guard = span(spans, "prompt-guard");
         assertNotNull(guard);
+        assertEquals(generation.getTraceId(), guard.getTraceId());
         assertEquals("guardrail", string(guard, "langfuse.observation.type"));
         assertEquals("redact", string(guard, "langfuse.observation.output"));
+    }
+
+    @Test
+    void groupsCallsOfOneTraceUnderASingleOtelTrace() {
+        UUID traceId = Uuid7.generate();
+        Observation first = observation(traceId);
+        Observation second = observation(traceId);
+
+        String firstId = exporter.export(first);
+        String secondId = exporter.export(second);
+
+        String expected = traceId.toString().replace("-", "");
+        assertNotNull(firstId);
+        assertNotNull(secondId);
+        assertTrue(!firstId.equals(secondId));
+        List<SpanData> generations = inMemory.getFinishedSpanItems().stream()
+                .filter(span -> span.getName().equals("chat gpt-4o"))
+                .toList();
+        assertEquals(2, generations.size());
+        assertTrue(generations.stream().allMatch(span -> span.getTraceId().equals(expected)));
+        assertEquals(
+                2,
+                generations.stream().map(SpanData::getSpanId).distinct().count());
+    }
+
+    @Test
+    void resolvesAMemberGroupCredentialBeforeDeploymentKeys() {
+        ProviderCredentialService credentials = mock(ProviderCredentialService.class);
+        LangfuseObservationExporter groupExporter =
+                new LangfuseObservationExporter(properties, new ObjectMapper(), inMemory, credentials);
+        UUID accountId = UUID.randomUUID();
+        UUID groupId = UUID.randomUUID();
+        UUID traceId = UUID.randomUUID();
+        when(credentials.resolveForGroup(groupId, ProviderKind.LANGFUSE))
+                .thenReturn(Optional.of(new ProviderCredentialService.Resolved("lf-public", "lf-secret")));
+
+        String observationId = groupExporter.export(new Observation(
+                UUID.randomUUID(),
+                accountId,
+                groupId,
+                traceId,
+                "conversation-key",
+                "gpt-4o",
+                "prompt",
+                "output",
+                "completed",
+                1,
+                1,
+                null,
+                null,
+                2,
+                null,
+                null,
+                "stop",
+                10,
+                "allow"));
+
+        assertNotNull(observationId);
+        verify(credentials).resolveForGroup(groupId, ProviderKind.LANGFUSE);
+        verify(credentials, never()).resolve(accountId, ProviderKind.LANGFUSE);
+        assertEquals(traceId.toString().replace("-", ""), span(inMemory.getFinishedSpanItems(), "chat gpt-4o").getTraceId());
+        groupExporter.shutdown();
+    }
+
+    private static Observation observation(UUID traceId) {
+        return new Observation(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                null,
+                traceId,
+                "conversation-key",
+                "gpt-4o",
+                "prompt",
+                "output",
+                "completed",
+                1,
+                1,
+                null,
+                null,
+                2,
+                null,
+                null,
+                "stop",
+                10,
+                "allow");
     }
 
     @Test
@@ -82,32 +174,12 @@ class LangfuseObservationExporterTest {
         LangfuseObservationExporter noKeys =
                 new LangfuseObservationExporter(disabled, new ObjectMapper());
 
-        noKeys.export(new GatewayObservationExporter.Observation(
+        assertNull(noKeys.export(new GatewayObservationExporter.Observation(
                 UUID.randomUUID(), UUID.randomUUID(), null, UUID.randomUUID(), null, "gpt-4o", null, "x",
-                "completed", null, null, null, null, null, null, null, null, 1, "allow"));
+                "completed", null, null, null, null, null, null, null, null, 1, "allow")));
         noKeys.shutdown();
 
         assertTrue(inMemory.getFinishedSpanItems().isEmpty());
-    }
-
-    @Test
-    void resolvesTheGroupCredentialForAGroupKey() {
-        ProviderCredentialService credentials = mock(ProviderCredentialService.class);
-        UUID groupId = UUID.randomUUID();
-        when(credentials.resolveForGroup(groupId, ProviderKind.LANGFUSE))
-                .thenReturn(Optional.of(new ProviderCredentialService.Resolved("pk-lf-group", "sk-lf-group")));
-        GovernanceProperties scoped = new GovernanceProperties();
-        scoped.getLangfuse().setBaseUrl("http://127.0.0.1:1");
-        scoped.getLangfuse().setTimeoutSeconds(1);
-        LangfuseObservationExporter scopedExporter =
-                new LangfuseObservationExporter(scoped, new ObjectMapper(), credentials);
-
-        scopedExporter.export(new GatewayObservationExporter.Observation(
-                UUID.randomUUID(), UUID.randomUUID(), groupId, UUID.randomUUID(), null, "gpt-4o",
-                "prompt", "output", "completed", 1, 1, null, null, 2, null, null, "stop", 1, "allow"));
-        scopedExporter.shutdown();
-
-        verify(credentials).resolveForGroup(groupId, ProviderKind.LANGFUSE);
     }
 
     private static SpanData span(List<SpanData> spans, String name) {

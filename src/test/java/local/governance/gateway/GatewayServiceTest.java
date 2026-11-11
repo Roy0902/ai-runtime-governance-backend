@@ -125,8 +125,10 @@ class GatewayServiceTest {
                 eq(List.of()),
                 eq("conversation-key"),
                 eq("message-hash"));
+        ArgumentCaptor<UUID> completedEvent = ArgumentCaptor.forClass(UUID.class);
         verify(traces).complete(
-                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("completed"), eq("stop"), anyInt());
+                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("completed"), eq("stop"),
+                anyInt(), completedEvent.capture());
 
         ArgumentCaptor<ModelUsageRecorder.Usage> recorded =
                 ArgumentCaptor.forClass(ModelUsageRecorder.Usage.class);
@@ -135,6 +137,38 @@ class GatewayServiceTest {
         assertEquals(1L, recorded.getValue().outputTokens());
         assertEquals("stop", recorded.getValue().finishReasons().getFirst());
         assertEquals("completed", recorded.getValue().outcome());
+        assertEquals(completedEvent.getValue(), recorded.getValue().eventId());
+    }
+
+    @Test
+    void recordsTheLangfuseObservationIdOnTheUsageRow() throws Exception {
+        GatewayObservationExporter exporter = mock(GatewayObservationExporter.class);
+        when(exporter.export(any())).thenReturn("0123456789abcdef");
+        GatewayService withExporter = serviceWithExporter(exporter);
+        when(guardrail.evaluate("hello"))
+                .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
+        when(upstream.sendChatCompletion(any(), eq(false), any()))
+                .thenReturn(httpResponse(
+                        200,
+                        "application/json",
+                        "{\"choices\":[{\"message\":{\"content\":\"hi\"}}]}"));
+
+        withExporter.exchange(principal, bytes(
+                        "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"),
+                        null)
+                .body()
+                .writeTo(new ByteArrayOutputStream());
+        runOutputPersistence();
+
+        ArgumentCaptor<ModelUsageRecorder.Usage> recorded =
+                ArgumentCaptor.forClass(ModelUsageRecorder.Usage.class);
+        verify(usage).record(recorded.capture());
+        assertEquals("0123456789abcdef", recorded.getValue().langfuseObservationId());
+
+        ArgumentCaptor<GatewayObservationExporter.Observation> observation =
+                ArgumentCaptor.forClass(GatewayObservationExporter.Observation.class);
+        verify(exporter).export(observation.capture());
+        assertEquals(recorded.getValue().traceId(), observation.getValue().traceId());
     }
 
     @Test
@@ -276,7 +310,8 @@ class GatewayServiceTest {
                 "email [REDACTED_EMAIL]",
                 sent.path("messages").path(0).path("content").asText());
         verify(traces).complete(
-                eq(scopeId), eq(traceId), eq("gpt-4o"), eq("completed"), isNull(), anyInt());
+                eq(scopeId), eq(traceId), eq("gpt-4o"), eq("completed"), isNull(),
+                anyInt(), any(UUID.class));
         verify(turnRecorder, never()).recordGuardedTurn(
                 any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -298,7 +333,8 @@ class GatewayServiceTest {
         runOutputPersistence();
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("slow down"));
         verify(traces).complete(
-                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("failed"), isNull(), anyInt());
+                eq(scopeId), any(UUID.class), eq("gpt-4o"), eq("failed"), isNull(),
+                anyInt(), any(UUID.class));
     }
 
     @Test
@@ -361,6 +397,24 @@ class GatewayServiceTest {
 
     private static byte[] bytes(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private GatewayService serviceWithExporter(GatewayObservationExporter exporter) {
+        return new GatewayService(
+                properties,
+                new GatewayRequestParser(objectMapper),
+                guardrail,
+                conversations,
+                turnRecorder,
+                traces,
+                upstream,
+                new GatewayResponseCapture(objectMapper),
+                pricing,
+                usage,
+                outputPersistence,
+                new GatewayRateLimiter(properties, Clock.fixed(NOW, ZoneOffset.UTC)),
+                objectMapper,
+                Optional.of(exporter));
     }
 
         private void runOutputPersistence() {

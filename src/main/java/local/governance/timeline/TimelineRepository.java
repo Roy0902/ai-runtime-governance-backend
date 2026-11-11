@@ -265,6 +265,22 @@ public class TimelineRepository {
                 .list();
     }
 
+    public List<UUID> traceIdsAfter(UUID scopeId, Instant afterReceivedAt, UUID afterId, int limit) {
+        return jdbc.sql("""
+                SELECT id FROM activity_trace
+                WHERE scope_id = :scope
+                  AND (received_at, id) > (CAST(:after AS timestamptz), CAST(:afterId AS uuid))
+                ORDER BY received_at ASC, id ASC
+                LIMIT :limit
+                """)
+                .param("scope", scopeId)
+                .param("after", ts(afterReceivedAt))
+                .param("afterId", afterId)
+                .param("limit", limit)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
+                .list();
+    }
+
     public List<UUID> eventIds(UUID scopeId, UUID traceId, int limit) {
         return jdbc.sql("""
                 SELECT id FROM activity_event

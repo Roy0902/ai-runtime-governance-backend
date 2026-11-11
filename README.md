@@ -327,6 +327,10 @@ outcome and rule IDs. Continuations of a redacted turn do not re-export the
 prompt. Export is asynchronous and bounded; a Langfuse outage never fails the
 model request or changes the local timeline.
 
+New gateway traces use a UUIDv7 identifier, and the same 128-bit value is used as
+the OTLP trace ID. The Langfuse trace ID therefore equals `activity_trace.id`,
+and every model call in one conversation is grouped under one Langfuse trace.
+
 This is an explicit privacy change: the local activity timeline remains
 metadata-only, but Langfuse receives prompt and output content. Disable
 `LANGFUSE_ENABLED` if that is not acceptable for a deployment.
@@ -346,6 +350,8 @@ timeline metadata. The stored fields include:
 - computed input/output/cached cost and any provider-reported cost
 - outcome, error type/code/message, account scope, credential id, conversation
   key, client conversation id, and client user agent
+- the Langfuse observation id when export is enabled, so each call's output can
+  be fetched by id without storing content locally
 - Langfuse remains the content store; `model_usage` never stores prompt or
   output bodies
 
@@ -353,8 +359,15 @@ Read it through:
 
 ```text
 GET /api/v1/usage/traces/{traceId}
+GET /api/v1/usage/traces/{traceId}/observations/{observationId}
 GET /api/v1/usage/summary?from=<ISO instant>&to=<ISO instant>
 ```
+
+The observation endpoint reads the generated output back from Langfuse on
+demand. It verifies that the observation id belongs to a model call in the
+scoped trace, so output content is never stored locally. It returns
+`LANGFUSE_DISABLED` when export is off and `LANGFUSE_UNAVAILABLE` when the
+Langfuse read fails.
 
 The summary defaults to the last 30 days and returns totals plus breakdowns by
 model and UTC day. The trace detail page shows a **Model usage** panel, and the
@@ -372,8 +385,11 @@ governance:
         output-per-million: 10.00
         cached-input-per-million: 1.25
         reasoning-output-per-million: 10.00
-        currency: USD
 ```
+
+All configured prices, stored costs, and usage summaries are in USD. Setting a
+different `currency` fails at startup rather than mixing currencies in the
+ledger.
 
 If a model has no configured price, token counts are still stored and the cost
 is shown as "Not priced". Provider credit balances and billing-account spend are

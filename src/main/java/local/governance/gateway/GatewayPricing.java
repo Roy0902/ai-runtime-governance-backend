@@ -45,7 +45,8 @@ public class GatewayPricing {
         if (price == null) {
             return empty();
         }
-        String currency = price.getCurrency();
+        // Pricing is USD-only; the ledger never mixes currencies.
+        String currency = "USD";
 
         Long input = positive(inputTokens);
         Long output = positive(outputTokens);
