@@ -1,6 +1,7 @@
 package local.governance.timeline.api;
 
 import jakarta.servlet.http.HttpServletRequest;
+import local.governance.api.ActivityEventResponse;
 import local.governance.api.EventPageResponse;
 import local.governance.api.TraceDetailResponse;
 import local.governance.api.TracePageResponse;
@@ -39,7 +40,16 @@ public class TimelineController {
     public EventPageResponse events(
             HttpServletRequest request,
             @PathVariable String traceId,
-            @RequestParam(required = false) String cursor) {
-        return service.events(request, traceId, cursor);
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "false") boolean includeContent) {
+        return service.events(request, traceId, cursor, includeContent);
+    }
+
+    @GetMapping("/{traceId}/events/{eventId}")
+    public ActivityEventResponse event(
+            HttpServletRequest request,
+            @PathVariable String traceId,
+            @PathVariable String eventId) {
+        return service.event(request, traceId, eventId);
     }
 }

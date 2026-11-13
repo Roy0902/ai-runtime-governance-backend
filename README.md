@@ -466,9 +466,9 @@ supports `stream_options`.
 - User content may be plain text or an OpenAI-style content-part array. Text is
   guarded in order, images become `[image]`, and other part types are discarded;
   content with no text or image is rejected with `PROTOCOL_UNSUPPORTED`.
-- Non-text model output parts are recorded as markers such as `[image]`,
-  `[audio]`, and `[file]`, and invalid Unicode/control characters are replaced
-  before storage or export.
+- Image output parts are recorded as `[image]`; other non-text output parts are
+  discarded, and invalid Unicode/control characters are replaced before storage
+  or export.
 - Approval is fail-closed, not interactive.
 - The conversation fingerprint is a pragmatic correlation key, not a per-turn
   client contract. Concurrent identical conversations can collide; sending a

@@ -91,7 +91,7 @@ class GatewayResponseCaptureTest {
     }
 
     @Test
-    void capturesNonTextContentPartsAsMarkers() {
+    void capturesImagePartsAndDiscardsOtherNonTextParts() {
         GatewayResponseCapture.Capture result = capture.capture(bytes("""
                 {"choices":[{"message":{"content":[
                   {"type":"text","text":"hello"},
@@ -101,7 +101,19 @@ class GatewayResponseCaptureTest {
                 ]},"finish_reason":"stop"}]}
                 """), "application/json", false);
 
-        assertEquals("hello\n[image]\n[audio]\n[file]", result.output());
+        assertEquals("hello\n[image]", result.output());
+    }
+
+    @Test
+    void discardsResponsesWithOnlyUnsupportedNonTextParts() {
+        GatewayResponseCapture.Capture result = capture.capture(bytes("""
+                {"choices":[{"message":{"content":[
+                  {"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}},
+                  {"type":"file","file":{"file_id":"file-1"}}
+                ]}}]}
+                """), "application/json", false);
+
+        assertEquals("", result.output());
     }
 
     @Test

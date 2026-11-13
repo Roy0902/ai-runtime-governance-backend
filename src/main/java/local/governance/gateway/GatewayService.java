@@ -295,7 +295,12 @@ public class GatewayService {
 
         byte[] forwardBody = withStreamUsage(
                 parsed,
-                rewrite(parsed.body(), parsed.userMessageIndex(), decision.message(), rawBody));
+                rewrite(
+                        parsed.body(),
+                        parsed.userMessageIndex(),
+                        parsed.userText(),
+                        decision.message(),
+                        rawBody));
         String conversationKey = conversations.key(
                 principal.scopeId(),
                 parsed.model(),
@@ -377,9 +382,13 @@ public class GatewayService {
                         null,
                         promptEventId);
             }
-            throw new APIException(
-                    "GUARD_CONTEXT_UNKNOWN",
-                    "The gateway could not match this continuation to a guarded human turn.");
+            // The correlation record can disappear because of its TTL or because
+            // local activity records were deleted (gateway_conversation cascades
+            // from activity_trace). Re-guard the last human message and record a
+            // fresh guarded turn instead of failing the continuation. This keeps
+            // the request guarded and gives it a new trace to attach to.
+            return prepareNewTurn(
+                    principal, parsed, rawBody, clientConversationId, clientUserAgent, sessionId);
         }
 
         Row conversation = found.get();
@@ -390,7 +399,7 @@ public class GatewayService {
                 conversation.guardedMessageHash(),
                 conversation.guardOutcome());
         byte[] forwardBody = withStreamUsage(
-                parsed, rewrite(parsed.body(), -1, null, rawBody));
+                parsed, rewrite(parsed.body(), -1, null, null, rawBody));
         return new Prepared(
                 conversation.traceId(),
                 principal.scopeId(),
@@ -708,16 +717,16 @@ public class GatewayService {
     private byte[] rewrite(
             JsonNode body,
             int currentIndex,
+            String originalText,
             String currentText,
             byte[] rawBody) {
         ArrayNode messages = (ArrayNode) body.get("messages");
         boolean changed = false;
-        if (currentIndex >= 0 && currentText != null) {
-            JsonNode existing = messages.get(currentIndex).get("content");
-            if (existing == null || !existing.isTextual() || !currentText.equals(existing.asText())) {
-                ((ObjectNode) messages.get(currentIndex)).put("content", currentText);
-                changed = true;
-            }
+        if (currentIndex >= 0
+                && currentText != null
+                && !currentText.equals(originalText)) {
+            ((ObjectNode) messages.get(currentIndex)).put("content", currentText);
+            changed = true;
         }
         for (int index = 0; index < messages.size(); index += 1) {
             if (index == currentIndex) {
@@ -725,12 +734,16 @@ public class GatewayService {
             }
             JsonNode message = messages.get(index);
             JsonNode content = message.get("content");
-            if (!"user".equals(text(message.get("role"))) || content == null || !content.isTextual()) {
+            if (!"user".equals(text(message.get("role"))) || content == null || content.isNull()) {
                 continue;
             }
-            GatewayGuardrail.Decision decision = guardrail.evaluate(content.asText());
+            String contentText = GatewayRequestParser.guardableText(content);
+            if (contentText == null) {
+                continue;
+            }
+            GatewayGuardrail.Decision decision = guardrail.evaluate(contentText);
             if (decision.outcome() == GuardOutcome.REDACT
-                    && !decision.message().equals(content.asText())) {
+                    && !decision.message().equals(contentText)) {
                 ((ObjectNode) message).put("content", decision.message());
                 changed = true;
             }

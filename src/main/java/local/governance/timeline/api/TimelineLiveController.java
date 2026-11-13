@@ -38,7 +38,8 @@ public class TimelineLiveController {
     public EventPageResponse events(
             HttpServletRequest request,
             @PathVariable String traceId,
-            @RequestParam(required = false) String since) {
-        return service.liveEvents(request, traceId, since);
+            @RequestParam(required = false) String since,
+            @RequestParam(defaultValue = "false") boolean includeContent) {
+        return service.liveEvents(request, traceId, since, includeContent);
     }
 }

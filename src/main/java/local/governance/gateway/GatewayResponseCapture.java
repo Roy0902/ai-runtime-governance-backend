@@ -26,10 +26,6 @@ public class GatewayResponseCapture {
             java.util.Set.of("text", "input_text", "output_text");
     private static final java.util.Set<String> IMAGE_PART_TYPES =
             java.util.Set.of("image_url", "image", "input_image", "output_image");
-    private static final java.util.Set<String> AUDIO_PART_TYPES =
-            java.util.Set.of("audio", "input_audio", "output_audio");
-    private static final java.util.Set<String> FILE_PART_TYPES =
-            java.util.Set.of("file", "input_file", "output_file");
 
     public record ToolCall(String id, String name, String arguments) {}
 
@@ -250,19 +246,12 @@ public class GatewayResponseCapture {
     }
 
     private static String marker(String type) {
-        if (type == null || type.isBlank()) {
-            return null;
-        }
-        if (IMAGE_PART_TYPES.contains(type)) {
+        if (type != null && IMAGE_PART_TYPES.contains(type)) {
             return "[image]";
         }
-        if (AUDIO_PART_TYPES.contains(type)) {
-            return "[audio]";
-        }
-        if (FILE_PART_TYPES.contains(type)) {
-            return "[file]";
-        }
-        return "[" + type + "]";
+        // Only images get a placeholder. Audio, files and unknown non-text
+        // parts are discarded.
+        return null;
     }
 
     private static void reasoning(JsonNode node, Accumulator accumulator) {

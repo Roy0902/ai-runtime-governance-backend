@@ -33,8 +33,10 @@ import org.springframework.stereotype.Service;
 @Service
 public class TimelineReadService {
 
-    public static final int TRACE_PAGE_SIZE = 50;
-    public static final int EVENT_PAGE_SIZE = 200;
+    public static final int TRACE_PAGE_SIZE = 25;
+    public static final int EVENT_PAGE_SIZE = 50;
+    private static final int PREVIEW_LENGTH = 240;
+    private static final String IMAGE_PLACEHOLDER = "[image]";
 
     private final AppUserService users;
     private final TimelineRepository timeline;
@@ -77,15 +79,38 @@ public class TimelineReadService {
         return detail(row);
     }
 
-    public EventPageResponse events(HttpServletRequest request, String rawTraceId, String cursor) {
+    public EventPageResponse events(
+            HttpServletRequest request,
+            String rawTraceId,
+            String cursor,
+            boolean includeContent) {
         failIfInjected();
         UUID scope = scope(request);
         UUID traceId = traceId(rawTraceId);
         timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
         if (cursor == null || cursor.isBlank()) {
-            return startEvents(scope, traceId);
+            return startEvents(scope, traceId, includeContent);
         }
-        return continueEvents(scope, traceId, cursor);
+        return continueEvents(scope, traceId, cursor, includeContent);
+    }
+
+    /**
+     * One event with its full captured content. The timeline list response omits
+     * content so a long trace only carries what is on screen.
+     */
+    public ActivityEventResponse event(
+            HttpServletRequest request,
+            String rawTraceId,
+            String rawEventId) {
+        failIfInjected();
+        UUID scope = scope(request);
+        UUID traceId = traceId(rawTraceId);
+        UUID eventId = eventId(rawEventId);
+        timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
+        EventRow row = timeline.eventsByIds(scope, traceId, List.of(eventId)).stream()
+                .findFirst()
+                .orElseThrow(APIException::notFound);
+        return event(row, usage.byEvent(scope, traceId).get(eventId), true);
     }
 
     /**
@@ -116,7 +141,11 @@ public class TimelineReadService {
      * Live event polling. Returns only events received after the supplied
      * cursor, oldest first, without creating a traversal row.
      */
-    public EventPageResponse liveEvents(HttpServletRequest request, String rawTraceId, String since) {
+    public EventPageResponse liveEvents(
+            HttpServletRequest request,
+            String rawTraceId,
+            String since,
+            boolean includeContent) {
         failIfInjected();
         UUID scope = scope(request);
         UUID traceId = traceId(rawTraceId);
@@ -127,7 +156,7 @@ public class TimelineReadService {
                 : timeline.eventsAfter(scope, traceId, cursor.receivedAt(), cursor.id(), EVENT_PAGE_SIZE);
         Map<UUID, ModelUsageSummaryResponse> usageByEvent = usage.byEvent(scope, traceId);
         List<ActivityEventResponse> items = rows.stream()
-                .map((row) -> event(row, usageByEvent.get(row.id())))
+                .map((row) -> event(row, usageByEvent.get(row.id()), includeContent))
                 .toList();
         return new EventPageResponse(items, null);
     }
@@ -154,7 +183,7 @@ public class TimelineReadService {
         return tracePage(scope, row.id(), row.memberIds(), decoded.position());
     }
 
-    private EventPageResponse startEvents(UUID scope, UUID traceId) {
+    private EventPageResponse startEvents(UUID scope, UUID traceId, boolean includeContent) {
         purgeAndCheck(scope);
         int max = properties.getTimeline().getMaxMembers();
         List<UUID> members = timeline.eventIds(scope, traceId, max + 1);
@@ -162,10 +191,14 @@ public class TimelineReadService {
             throw APIException.traversalTooLarge();
         }
         TraversalRow row = create(scope, "EVENT_LIST", traceId, members);
-        return eventPage(scope, traceId, row.id(), members, 0);
+        return eventPage(scope, traceId, row.id(), members, 0, includeContent);
     }
 
-    private EventPageResponse continueEvents(UUID scope, UUID traceId, String cursor) {
+    private EventPageResponse continueEvents(
+            UUID scope,
+            UUID traceId,
+            String cursor,
+            boolean includeContent) {
         TimelineCursor decoded = TimelineCursor.decode(cursor);
         TraversalRow row = timeline.traversal(decoded.traversalId(), scope)
                 .orElseThrow(() -> new APIException("REQUEST_INVALID", "Check the request and try again."));
@@ -175,7 +208,8 @@ public class TimelineReadService {
             throw new APIException("REQUEST_INVALID", "Check the request and try again.");
         }
         requireUnexpired(row);
-        return eventPage(scope, traceId, row.id(), row.memberIds(), decoded.position());
+        return eventPage(
+                scope, traceId, row.id(), row.memberIds(), decoded.position(), includeContent);
     }
 
     private TraversalRow create(UUID scope, String kind, UUID traceId, List<UUID> members) {
@@ -211,7 +245,13 @@ public class TimelineReadService {
         return new TracePageResponse(items, nextCursor);
     }
 
-    private EventPageResponse eventPage(UUID scope, UUID traceId, UUID traversalId, List<UUID> members, int position) {
+    private EventPageResponse eventPage(
+            UUID scope,
+            UUID traceId,
+            UUID traversalId,
+            List<UUID> members,
+            int position,
+            boolean includeContent) {
         int end = Math.min(position + EVENT_PAGE_SIZE, members.size());
         List<UUID> pageIds = members.subList(position, end);
         Map<UUID, EventRow> rows = timeline.eventsByIds(scope, traceId, pageIds).stream()
@@ -219,7 +259,7 @@ public class TimelineReadService {
         Map<UUID, ModelUsageSummaryResponse> usageByEvent = usage.byEvent(scope, traceId);
         List<ActivityEventResponse> items = pageIds.stream()
                 .map((id) -> rows.containsKey(id)
-                        ? event(rows.get(id), usageByEvent.get(id))
+                        ? event(rows.get(id), usageByEvent.get(id), includeContent)
                         : tombstoneEvent(traceId, id))
                 .toList();
         String nextCursor = end < members.size() ? TimelineCursor.encode(traversalId, end) : null;
@@ -237,6 +277,14 @@ public class TimelineReadService {
     }
 
     private static UUID traceId(String raw) {
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException exception) {
+            throw APIException.notFound();
+        }
+    }
+
+    private static UUID eventId(String raw) {
         try {
             return UUID.fromString(raw);
         } catch (IllegalArgumentException exception) {
@@ -278,7 +326,10 @@ public class TimelineReadService {
                         : null);
     }
 
-    private ActivityEventResponse event(EventRow row, ModelUsageSummaryResponse usage) {
+    private ActivityEventResponse event(
+            EventRow row,
+            ModelUsageSummaryResponse usage,
+            boolean includeContent) {
         String relationship = row.parentEventId() == null
                 ? "root"
                 : row.parentExists() ? "linked" : "unresolved";
@@ -294,6 +345,8 @@ public class TimelineReadService {
             default -> new EventMetadataResponse(
                     null, null, row.ruleIds(), null, null, null, null, row.label(), row.observedStatus());
         };
+        Object parsedContent = parseContent(row.content());
+        boolean hasContent = parsedContent != null;
         return new ActivityEventResponse(
                 row.id(),
                 row.traceId(),
@@ -306,11 +359,13 @@ public class TimelineReadService {
                 row.identity(),
                 metadata,
                 usage,
-                content(row.content()),
-                false);
+                includeContent ? parsedContent : null,
+                false,
+                includeContent ? null : preview(parsedContent),
+                hasContent);
     }
 
-    private Object content(String value) {
+    private Object parseContent(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
@@ -321,8 +376,68 @@ public class TimelineReadService {
         }
     }
 
+    /**
+     * Short, human-readable text taken from captured content so a list row can
+     * show what an event was about without shipping the full payload.
+     */
+    private static String preview(Object content) {
+        String text = previewText(content);
+        if (text == null) {
+            return null;
+        }
+        String normalized = text.strip().replaceAll("\\s+", " ");
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        return normalized.length() <= PREVIEW_LENGTH
+                ? normalized
+                : normalized.substring(0, PREVIEW_LENGTH) + "…";
+    }
+
+    private static String previewText(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof CharSequence text) {
+            return text.toString();
+        }
+        if (value instanceof Map<?, ?> map) {
+            for (String key : List.of("text", "output", "reasoning", "arguments", "name")) {
+                String candidate = previewText(map.get(key));
+                if (candidate != null && !candidate.isBlank()) {
+                    return candidate;
+                }
+            }
+            Object type = map.get("type");
+            if (type instanceof CharSequence kind
+                    && ("image_url".equals(kind.toString())
+                            || "image".equals(kind.toString())
+                            || "input_image".equals(kind.toString()))) {
+                return IMAGE_PLACEHOLDER;
+            }
+            return null;
+        }
+        if (value instanceof Iterable<?> items) {
+            String image = null;
+            for (Object item : items) {
+                String candidate = previewText(item);
+                if (candidate == null || candidate.isBlank()) {
+                    continue;
+                }
+                if (IMAGE_PLACEHOLDER.equals(candidate)) {
+                    image = candidate;
+                } else {
+                    return candidate;
+                }
+            }
+            return image;
+        }
+        return null;
+    }
+
     private static ActivityEventResponse tombstoneEvent(UUID traceId, UUID eventId) {
         return new ActivityEventResponse(
-                eventId, traceId, null, null, null, null, null, null, null, null, null, null, true);
+                eventId, traceId, null, null, null, null, null, null, null, null, null, null, true,
+                null, false);
     }
 }

@@ -358,20 +358,63 @@ class GatewayServiceTest {
     }
 
     @Test
-    void rejectsAContinuationThatIsNotLinkedToAGuardedTurn() {
+    void recoversAContinuationWhenTheGuardedTurnRecordIsMissing() throws Exception {
         when(conversations.find(scopeId, "conversation-key")).thenReturn(Optional.empty());
+        when(guardrail.evaluate("hello"))
+                .thenReturn(new GatewayGuardrail.Decision(
+                        GuardOutcome.ALLOW, "hello", List.of(), List.of()));
+        when(turnRecorder.recordGuardedTurn(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(UUID.randomUUID());
+        ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
+        when(upstream.sendChatCompletion(forwarded.capture(), eq(false), any()))
+                .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
+
+        GatewayService.ProxyResponse response = service.exchange(principal, bytes("""
+                {"model":"gpt-4o","messages":[
+                  {"role":"user","content":"hello"},
+                  {"role":"tool","tool_call_id":"call-1","content":"ok"}
+                ]}
+                """), null);
+        response.body().writeTo(new ByteArrayOutputStream());
+        runOutputPersistence();
+
+        assertEquals(200, response.status());
+        JsonNode sent = objectMapper.readTree(forwarded.getValue());
+        assertEquals(2, sent.path("messages").size());
+        assertEquals("hello", sent.path("messages").path(0).path("content").asText());
+        verify(turnRecorder).recordGuardedTurn(
+                eq(scopeId),
+                any(UUID.class),
+                eq("gpt-4o"),
+                eq(GuardOutcome.ALLOW),
+                eq(GatewayGuardrail.POLICY_ID),
+                eq(GatewayGuardrail.POLICY_VERSION),
+                eq(List.of()),
+                eq("conversation-key"),
+                eq("message-hash"),
+                anyString(),
+                isNull());
+    }
+
+    @Test
+    void doesNotForwardARecoveredContinuationWhenTheGuardedHumanTurnIsDenied() {
+        when(conversations.find(scopeId, "conversation-key")).thenReturn(Optional.empty());
+        when(guardrail.evaluate("bad"))
+                .thenReturn(new GatewayGuardrail.Decision(
+                        GuardOutcome.DENY, "bad", List.of("FX-DENY"), List.of()));
 
         APIException exception = assertThrows(
                 APIException.class,
                 () -> service.exchange(principal, bytes("""
                         {"model":"gpt-4o","messages":[
-                          {"role":"user","content":"hello"},
+                          {"role":"user","content":"bad"},
                           {"role":"tool","tool_call_id":"call-1","content":"ok"}
                         ]}
                         """), null));
 
-        assertEquals("GUARD_CONTEXT_UNKNOWN", exception.code());
-        verifyNoInteractions(upstream, turnRecorder);
+        assertEquals("GUARD_DENIED", exception.code());
+        verifyNoInteractions(upstream);
     }
 
     @Test
@@ -496,6 +539,114 @@ class GatewayServiceTest {
         service.exchange(principal, request, null).body().writeTo(new ByteArrayOutputStream());
 
         assertArrayEquals(request, forwarded.getValue());
+    }
+
+    @Test
+    void forwardsOriginalMultimodalBytesWhenAllowed() throws Exception {
+        byte[] request = bytes("""
+                {"model":"gpt-4o","messages":[{"role":"user","content":[
+                  {"type":"text","text":"describe"},
+                  {"type":"image_url","image_url":{"url":"https://example.test/x.png"}}
+                ]}]}
+                """);
+        when(guardrail.evaluate("describe\n[image]"))
+                .thenReturn(new GatewayGuardrail.Decision(
+                        GuardOutcome.ALLOW, "describe\n[image]", List.of(), List.of()));
+        ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
+        when(upstream.sendChatCompletion(
+                    forwarded.capture(), eq(false), any()))
+                .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
+
+        service.exchange(principal, request, null).body().writeTo(new ByteArrayOutputStream());
+
+        assertArrayEquals(request, forwarded.getValue());
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(turnRecorder).recordGuardedTurn(
+                eq(scopeId),
+                any(UUID.class),
+                eq("gpt-4o"),
+                eq(GuardOutcome.ALLOW),
+                eq(GatewayGuardrail.POLICY_ID),
+                eq(GatewayGuardrail.POLICY_VERSION),
+                eq(List.of()),
+                eq("conversation-key"),
+                eq("message-hash"),
+                prompt.capture(),
+                isNull());
+        assertTrue(prompt.getValue().contains("describe"));
+        assertTrue(prompt.getValue().contains(GatewayRequestParser.IMAGE_PLACEHOLDER));
+    }
+
+    @Test
+    void rewritesMultimodalContentWhenRedactionIsNeeded() throws Exception {
+        byte[] request = bytes("""
+                {"model":"gpt-4o","messages":[{"role":"user","content":[
+                  {"type":"text","text":"email person@example.test"},
+                  {"type":"image_url","image_url":{"url":"https://example.test/x.png"}}
+                ]}]}
+                """);
+        when(guardrail.evaluate("email person@example.test\n[image]")).thenReturn(
+                new GatewayGuardrail.Decision(
+                        GuardOutcome.REDACT,
+                        "email [REDACTED_EMAIL]\n[image]",
+                        List.of("FX-EMAIL"),
+                        List.of()));
+        ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
+        when(upstream.sendChatCompletion(
+                    forwarded.capture(), eq(false), any()))
+                .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
+
+        service.exchange(principal, request, null).body().writeTo(new ByteArrayOutputStream());
+
+        JsonNode sent = objectMapper.readTree(forwarded.getValue());
+        assertEquals(
+                "email [REDACTED_EMAIL]\n[image]",
+                sent.path("messages").path(0).path("content").asText());
+        assertTrue(!new String(forwarded.getValue(), StandardCharsets.UTF_8).contains("person@example.test"));
+    }
+
+    @Test
+    void sanitizesAnEarlierMultimodalUserMessageOnAContinuation() throws Exception {
+        UUID traceId = UUID.randomUUID();
+        when(conversations.find(scopeId, "conversation-key")).thenReturn(Optional.of(new Row(
+                "conversation-key",
+                scopeId,
+                traceId,
+                "message-hash",
+                "allow",
+                false,
+                NOW,
+                NOW.plusSeconds(600))));
+        when(guardrail.evaluate("email person@example.test\n[image]")).thenReturn(
+                new GatewayGuardrail.Decision(
+                        GuardOutcome.REDACT,
+                        "email [REDACTED_EMAIL]\n[image]",
+                        List.of("FX-EMAIL"),
+                        List.of()));
+        ArgumentCaptor<byte[]> forwarded = ArgumentCaptor.forClass(byte[].class);
+        when(upstream.sendChatCompletion(
+                    forwarded.capture(), eq(false), any()))
+                .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
+
+        service.exchange(principal, bytes("""
+                {"model":"gpt-4o","messages":[
+                  {"role":"user","content":[
+                    {"type":"text","text":"email person@example.test"},
+                    {"type":"image_url","image_url":{"url":"https://example.test/x.png"}}
+                  ]},
+                  {"role":"assistant","content":null,
+                   "tool_calls":[{"id":"call-1","type":"function",
+                     "function":{"name":"x","arguments":"{}"}}]},
+                  {"role":"tool","tool_call_id":"call-1","content":"ok"}
+                ]}
+                """), null).body().writeTo(new ByteArrayOutputStream());
+        runOutputPersistence();
+
+        JsonNode sent = objectMapper.readTree(forwarded.getValue());
+        assertEquals(
+                "email [REDACTED_EMAIL]\n[image]",
+                sent.path("messages").path(0).path("content").asText());
+        assertTrue(!new String(forwarded.getValue(), StandardCharsets.UTF_8).contains("person@example.test"));
     }
 
     private static byte[] bytes(String value) {
