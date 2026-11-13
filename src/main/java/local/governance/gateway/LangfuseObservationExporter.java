@@ -151,23 +151,7 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
 
     private void traceAttributes(Span span, Observation observation) {
         GovernanceProperties.LangfuseProperties langfuse = properties.getLangfuse();
-        span.setAttribute("langfuse.trace.name", "gateway " + observation.model());
-        span.setAttribute("langfuse.user.id", observation.scopeId().toString());
-        if (observation.sessionId() != null) {
-            span.setAttribute("langfuse.session.id", observation.sessionId());
-        }
-        span.setAttribute("langfuse.release", "0.1.0");
-        span.setAttribute(TAGS, List.of(
-                "gateway",
-                "model:" + observation.model(),
-                "status:" + observation.status()));
-        span.setAttribute("langfuse.trace.metadata.trace_id", observation.traceId().toString());
-        if (observation.guardOutcome() != null) {
-            span.setAttribute("langfuse.trace.metadata.guard_outcome", observation.guardOutcome());
-        }
-        span.setAttribute("langfuse.trace.metadata.policy_id", GatewayGuardrail.POLICY_ID);
-        span.setAttribute("langfuse.trace.metadata.policy_version", GatewayGuardrail.POLICY_VERSION);
-
+        traceLevelAttributes(span, observation);
         span.setAttribute("langfuse.observation.type", "generation");
         span.setAttribute("langfuse.observation.model.name", observation.model());
         span.setAttribute("langfuse.observation.level",
@@ -218,6 +202,51 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
         if (observation.totalTokens() != null) {
             span.setAttribute("gen_ai.usage.total_tokens", observation.totalTokens().longValue());
         }
+    }
+
+    /**
+     * Sets the Langfuse trace-level attributes. They are applied to every span
+     * of the trace because Langfuse filters and aggregates on observations.
+     */
+    private void traceLevelAttributes(Span span, Observation observation) {
+        String email = normalizeEmail(observation.userEmail());
+        String groupName = observation.groupName();
+        span.setAttribute("langfuse.trace.name", "gateway " + observation.model());
+        span.setAttribute("langfuse.user.id",
+                email == null ? observation.accountId().toString() : email);
+        if (observation.sessionId() != null) {
+            span.setAttribute("langfuse.session.id", observation.sessionId());
+        }
+        span.setAttribute("langfuse.release", "0.1.0");
+        List<String> tags = new java.util.ArrayList<>(List.of(
+                "gateway",
+                "model:" + observation.model(),
+                "status:" + observation.status()));
+        if (observation.groupId() != null) {
+            tags.add("group:" + tagSlug(groupName == null
+                    ? observation.groupId().toString()
+                    : groupName));
+        }
+        span.setAttribute(TAGS, tags);
+        span.setAttribute("langfuse.trace.metadata.trace_id", observation.traceId().toString());
+        span.setAttribute("langfuse.trace.metadata.account_id", observation.accountId().toString());
+        if (email != null) {
+            span.setAttribute("langfuse.trace.metadata.user_email", email);
+        }
+        if (observation.userName() != null && !observation.userName().isBlank()) {
+            span.setAttribute("langfuse.trace.metadata.user_name", observation.userName());
+        }
+        if (observation.groupId() != null) {
+            span.setAttribute("langfuse.trace.metadata.group_id", observation.groupId().toString());
+            if (groupName != null && !groupName.isBlank()) {
+                span.setAttribute("langfuse.trace.metadata.group_name", groupName);
+            }
+        }
+        if (observation.guardOutcome() != null) {
+            span.setAttribute("langfuse.trace.metadata.guard_outcome", observation.guardOutcome());
+        }
+        span.setAttribute("langfuse.trace.metadata.policy_id", GatewayGuardrail.POLICY_ID);
+        span.setAttribute("langfuse.trace.metadata.policy_version", GatewayGuardrail.POLICY_VERSION);
     }
 
     private Tracer tracerFor(Observation observation) {
@@ -306,6 +335,7 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
                 .setSpanKind(SpanKind.INTERNAL)
                 .startSpan();
         try {
+            traceLevelAttributes(guard, observation);
             guard.setAttribute("langfuse.observation.type", "guardrail");
             guard.setAttribute("langfuse.observation.output", observation.guardOutcome());
             guard.setAttribute("langfuse.observation.level", "DEFAULT");
@@ -423,6 +453,20 @@ public class LangfuseObservationExporter implements GatewayObservationExporter {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private static String normalizeEmail(String value) {
+        return isBlank(value) ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static String tagSlug(String value) {
+        if (isBlank(value)) {
+            return "unknown";
+        }
+        String slug = value.trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9._-]+", "-")
+                .replaceAll("^-+|-+$", "");
+        return slug.isEmpty() ? "unknown" : slug;
     }
 
     private static String fingerprint(String accessKey, String secret) {

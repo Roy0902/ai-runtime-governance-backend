@@ -29,6 +29,7 @@ public class GatewayController {
             @RequestHeader(value = "x-api-key", required = false) String apiKey,
             @RequestHeader(value = "X-Governance-Conversation-Id", required = false)
             String conversationId,
+            @RequestHeader(value = "x-opencode-session", required = false) String agentSessionId,
             @RequestHeader(value = "User-Agent", required = false) String userAgent,
             @RequestBody byte[] body) {
         Principal principal = credentials.authenticate(GatewayTokens.resolve(authorization, apiKey));
@@ -36,7 +37,8 @@ public class GatewayController {
                 principal,
                 body == null ? new byte[0] : body,
                 conversationId,
-                userAgent);
+                userAgent,
+                agentSessionId);
         return ResponseEntity.status(response.status())
                 .headers(response.headers())
                 .body(response.body());

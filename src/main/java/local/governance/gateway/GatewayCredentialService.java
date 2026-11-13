@@ -34,7 +34,19 @@ public class GatewayCredentialService {
             String token,
             java.time.Instant createdAt) {}
 
-    public record Principal(UUID credentialId, UUID accountId, UUID scopeId, UUID groupId) {}
+    public record Principal(
+            UUID credentialId,
+            UUID accountId,
+            UUID scopeId,
+            UUID groupId,
+            String email,
+            String displayName,
+            String groupName) {
+
+        public Principal(UUID credentialId, UUID accountId, UUID scopeId, UUID groupId) {
+            this(credentialId, accountId, scopeId, groupId, null, null, null);
+        }
+    }
 
     private final GatewayCredentialRepository credentials;
     private final AuthenticationRepository accounts;
@@ -146,7 +158,17 @@ public class GatewayCredentialService {
             throw new APIException("GROUP_ACCESS_DENIED", "You are not a member of this group.");
         }
         credentials.markUsed(credential.id(), clock.instant());
-        return new Principal(credential.id(), account.id(), account.scopeId(), credential.groupId());
+        String groupName = credential.groupId() == null
+                ? null
+                : groups.findGroup(credential.groupId()).map(row -> row.name()).orElse(null);
+        return new Principal(
+                credential.id(),
+                account.id(),
+                account.scopeId(),
+                credential.groupId(),
+                account.email(),
+                null,
+                groupName);
     }
 
     private AccountRow requireEnrolledAccount(UUID accountId) {

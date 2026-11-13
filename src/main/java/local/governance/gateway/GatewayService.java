@@ -29,6 +29,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 public class GatewayService {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayService.class);
+    private static final int MAX_SESSION_ID_LENGTH = 128;
 
     public record ProxyResponse(int status, HttpHeaders headers, StreamingResponseBody body) {}
 
@@ -39,6 +40,10 @@ public class GatewayService {
             UUID groupId,
             UUID credentialId,
             String conversationKey,
+            String sessionId,
+            String userEmail,
+            String userName,
+            String groupName,
             String clientConversationId,
             String clientUserAgent,
             String model,
@@ -102,6 +107,15 @@ public class GatewayService {
             byte[] rawBody,
             String clientConversationId,
             String clientUserAgent) {
+        return exchange(principal, rawBody, clientConversationId, clientUserAgent, null);
+    }
+
+    public ProxyResponse exchange(
+            Principal principal,
+            byte[] rawBody,
+            String clientConversationId,
+            String clientUserAgent,
+            String agentSessionId) {
         GovernanceProperties.GatewayProperties gateway = properties.getGateway();
         if (!gateway.isEnabled()) {
             throw new APIException("GATEWAY_DISABLED", "The model gateway is disabled.");
@@ -124,7 +138,7 @@ public class GatewayService {
         }
 
         Prepared prepared = prepare(
-                principal, parsed, rawBody, clientConversationId, clientUserAgent);
+                principal, parsed, rawBody, clientConversationId, clientUserAgent, agentSessionId);
 
         if (!rateLimiter.acquireUpstream()) {
             throw new APIException(
@@ -206,13 +220,15 @@ public class GatewayService {
             Parsed parsed,
             byte[] rawBody,
             String clientConversationId,
-            String clientUserAgent) {
+            String clientUserAgent,
+            String agentSessionId) {
+        String sessionId = sessionId(principal.scopeId(), clientConversationId, agentSessionId);
         if (parsed.mode() == GatewayRequestParser.Mode.NEW_TURN) {
             return prepareNewTurn(
-                    principal, parsed, rawBody, clientConversationId, clientUserAgent);
+                    principal, parsed, rawBody, clientConversationId, clientUserAgent, sessionId);
         }
         return prepareContinuation(
-                principal, parsed, rawBody, clientConversationId, clientUserAgent);
+                principal, parsed, rawBody, clientConversationId, clientUserAgent, sessionId);
     }
 
     private Prepared prepareNewTurn(
@@ -220,7 +236,8 @@ public class GatewayService {
             Parsed parsed,
             byte[] rawBody,
             String clientConversationId,
-            String clientUserAgent) {
+            String clientUserAgent,
+            String sessionId) {
         GatewayGuardrail.Decision decision = guardrail.evaluate(parsed.userText());
         UUID traceId = Uuid7.generate();
 
@@ -287,6 +304,10 @@ public class GatewayService {
                 principal.groupId(),
                 principal.credentialId(),
                 conversationKey,
+                sessionId,
+                principal.email(),
+                principal.displayName(),
+                principal.groupName(),
                 clientConversationId,
                 clientUserAgent,
                 parsed.model(),
@@ -301,7 +322,8 @@ public class GatewayService {
             Parsed parsed,
             byte[] rawBody,
             String clientConversationId,
-            String clientUserAgent) {
+            String clientUserAgent,
+            String sessionId) {
         String conversationKey = conversations.key(
                 principal.scopeId(), parsed.model(), parsed.canonicalPrefix(), clientConversationId);
         Optional<Row> found = conversations.find(principal.scopeId(), conversationKey);
@@ -316,6 +338,10 @@ public class GatewayService {
                         principal.groupId(),
                         principal.credentialId(),
                         conversationKey,
+                        sessionId,
+                        principal.email(),
+                        principal.displayName(),
+                        principal.groupName(),
                         clientConversationId,
                         clientUserAgent,
                         parsed.model(),
@@ -345,6 +371,10 @@ public class GatewayService {
                 principal.groupId(),
                 principal.credentialId(),
                 conversationKey,
+                sessionId,
+                principal.email(),
+                principal.displayName(),
+                principal.groupName(),
                 clientConversationId,
                 clientUserAgent,
                 parsed.model(),
@@ -352,6 +382,31 @@ public class GatewayService {
                 parsed.stream(),
                 null,
                 conversation.guardOutcome());
+    }
+
+    /**
+     * Builds the Langfuse session id from a client-supplied conversation or
+     * agent session header. The scope is prefixed so two accounts cannot merge
+     * their sessions, and unusable values fall back to the next candidate
+     * instead of failing the model request.
+     */
+    private static String sessionId(UUID scopeId, String clientConversationId, String agentSessionId) {
+        String value = validSessionId(clientConversationId);
+        if (value == null) {
+            value = validSessionId(agentSessionId);
+        }
+        return value == null ? null : scopeId + ":" + value;
+    }
+
+    private static String validSessionId(String candidate) {
+        if (candidate == null) {
+            return null;
+        }
+        String value = candidate.trim();
+        if (value.isEmpty() || value.length() > MAX_SESSION_ID_LENGTH) {
+            return null;
+        }
+        return value.matches("[A-Za-z0-9][A-Za-z0-9._:-]*") ? value : null;
     }
 
     private ProxyResponse proxy(Prepared prepared, HttpResponse<InputStream> response) {
@@ -505,7 +560,7 @@ public class GatewayService {
                     prepared.accountId(),
                     prepared.groupId(),
                     prepared.traceId(),
-                    prepared.conversationKey(),
+                    prepared.sessionId(),
                     prepared.model(),
                     prepared.prompt(),
                     result.output(),
@@ -519,7 +574,10 @@ public class GatewayService {
                     cost.totalUsd(),
                     result.finishReason(),
                     durationMs,
-                    prepared.guardOutcome()));
+                    prepared.guardOutcome(),
+                    prepared.userEmail(),
+                    prepared.userName(),
+                    prepared.groupName()));
         } catch (RuntimeException exception) {
             log.warn("gateway observation export failed", exception);
             return null;

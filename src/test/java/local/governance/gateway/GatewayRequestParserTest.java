@@ -85,12 +85,13 @@ class GatewayRequestParserTest {
     }
 
     @Test
-    void rejectsAnOversizedSubmittedMessage() {
-        String large = "a".repeat(GatewayRequestParser.MAX_MESSAGE_BYTES + 1);
-        APIException exception = assertThrows(APIException.class, () -> parser.parse(bytes(
-                "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"" + large + "\"}]}")));
+    void acceptsALargeSubmittedMessage() {
+        String large = "a".repeat(200_000);
+        GatewayRequestParser.Parsed parsed = parser.parse(bytes(
+                "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"" + large + "\"}]}"));
 
-        assertEquals("MESSAGE_LIMIT_EXCEEDED", exception.code());
+        assertEquals(GatewayRequestParser.Mode.NEW_TURN, parsed.mode());
+        assertEquals(large, parsed.userText());
     }
 
     @Test

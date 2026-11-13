@@ -2,6 +2,7 @@ package local.governance.gateway;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -169,6 +170,67 @@ class GatewayServiceTest {
                 ArgumentCaptor.forClass(GatewayObservationExporter.Observation.class);
         verify(exporter).export(observation.capture());
         assertEquals(recorded.getValue().traceId(), observation.getValue().traceId());
+    }
+
+    @Test
+    void derivesTheLangfuseSessionFromClientHeaders() throws Exception {
+        GatewayObservationExporter exporter = mock(GatewayObservationExporter.class);
+        GatewayService withExporter = serviceWithExporter(exporter);
+        Principal identified = new Principal(
+                credentialId,
+                principal.accountId(),
+                scopeId,
+                null,
+                "Person@Example.test",
+                "Person Example",
+                null);
+        when(guardrail.evaluate("hello"))
+                .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
+        when(upstream.sendChatCompletion(any(), eq(false), any()))
+                .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
+
+        withExporter.exchange(
+                        identified,
+                        bytes("{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"),
+                        "conv-1",
+                        "agent/1.0",
+                        "agent-session-9")
+                .body()
+                .writeTo(new ByteArrayOutputStream());
+
+        ArgumentCaptor<GatewayObservationExporter.Observation> captured =
+                ArgumentCaptor.forClass(GatewayObservationExporter.Observation.class);
+        verify(exporter).export(captured.capture());
+        assertEquals(scopeId + ":conv-1", captured.getValue().sessionId());
+        assertEquals("Person@Example.test", captured.getValue().userEmail());
+        assertEquals("Person Example", captured.getValue().userName());
+    }
+
+    @Test
+    void fallsBackToTheAgentSessionAndDropsUnusableSessionIds() throws Exception {
+        GatewayObservationExporter exporter = mock(GatewayObservationExporter.class);
+        GatewayService withExporter = serviceWithExporter(exporter);
+        when(guardrail.evaluate("hello"))
+                .thenReturn(new GatewayGuardrail.Decision(GuardOutcome.ALLOW, "hello", List.of(), List.of()));
+        when(upstream.sendChatCompletion(any(), eq(false), any()))
+                .thenReturn(httpResponse(200, "application/json", "{\"choices\":[]}"));
+
+        withExporter.exchange(principal, bytes(
+                        "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"),
+                        null, null, "agent-session-9")
+                .body()
+                .writeTo(new ByteArrayOutputStream());
+        withExporter.exchange(principal, bytes(
+                        "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"),
+                        null, null, "not a valid id!")
+                .body()
+                .writeTo(new ByteArrayOutputStream());
+
+        ArgumentCaptor<GatewayObservationExporter.Observation> captured =
+                ArgumentCaptor.forClass(GatewayObservationExporter.Observation.class);
+        verify(exporter, org.mockito.Mockito.times(2)).export(captured.capture());
+        assertEquals(scopeId + ":agent-session-9", captured.getAllValues().get(0).sessionId());
+        assertNull(captured.getAllValues().get(1).sessionId());
     }
 
     @Test
