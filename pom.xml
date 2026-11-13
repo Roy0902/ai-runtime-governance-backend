@@ -13,7 +13,7 @@
 
   <groupId>local.governance</groupId>
   <artifactId>ai-runtime-governance-backend</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <name>AI Runtime Governance backend</name>
   <description>Guarded AI gateway, activity timeline and native accounts</description>
 
