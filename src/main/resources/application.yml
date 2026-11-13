@@ -32,6 +32,8 @@ management:
 
 governance:
   base-url: ${GOVERNANCE_BASE_URL:http://127.0.0.1:5173}
+  iam:
+    mode: ${GOVERNANCE_IAM_MODE:native}
   admin:
     allowed-os-users: ${GOVERNANCE_ADMIN_USERS:${user.name}}
   trusted-proxies: ${GOVERNANCE_TRUSTED_PROXIES:}
@@ -57,6 +59,12 @@ governance:
     requests-per-minute: ${GOVERNANCE_GATEWAY_REQUESTS_PER_MINUTE:60}
     allow-unguarded-continuation: ${GOVERNANCE_GATEWAY_ALLOW_UNGUARDED_CONTINUATION:false}
     force-stream-usage: ${GOVERNANCE_GATEWAY_FORCE_STREAM_USAGE:false}
+  timeline:
+    max-members: ${GOVERNANCE_TIMELINE_MAX_MEMBERS:10000}
+    max-active: ${GOVERNANCE_TIMELINE_MAX_ACTIVE:5}
+    ttl-seconds: ${GOVERNANCE_TIMELINE_TTL_SECONDS:300}
+  credentials:
+    key-dir: ${GOVERNANCE_CREDENTIAL_KEY_DIR:${user.home}/.arg/keys}
   langfuse:
     enabled: ${LANGFUSE_ENABLED:false}
     base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
@@ -69,9 +77,9 @@ governance:
   pricing:
     models:
       # Example; add the models your deployment actually uses.
+      # All prices are USD.
       # gpt-4o:
       #   input-per-million: 2.50
       #   output-per-million: 10.00
       #   cached-input-per-million: 1.25
       #   reasoning-output-per-million: 10.00
-      #   currency: USD

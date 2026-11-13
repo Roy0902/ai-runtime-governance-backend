@@ -18,10 +18,10 @@ import java.util.Optional;
 import java.util.UUID;
 import local.governance.api.APIException;
 import local.governance.authentication.crypto.SecureTokenService;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
 import local.governance.config.GovernanceProperties;
 import local.governance.gateway.GatewayCredentialRepository.Row;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -33,20 +33,24 @@ class GatewayCredentialServiceTest {
     private final UUID accountId = UUID.randomUUID();
     private final UUID scopeId = UUID.randomUUID();
     private GatewayCredentialRepository credentials;
-    private AuthenticationRepository accounts;
+    private AppUserService users;
     private SecureTokenService tokens;
     private GovernanceProperties properties;
+    private local.governance.group.GroupRepository groups;
     private GatewayCredentialService service;
 
     @BeforeEach
     void setUp() {
         credentials = mock(GatewayCredentialRepository.class);
-        accounts = mock(AuthenticationRepository.class);
+        users = mock(AppUserService.class);
         tokens = new SecureTokenService();
         properties = new GovernanceProperties();
+        groups = mock(local.governance.group.GroupRepository.class);
         service = new GatewayCredentialService(
-                credentials, accounts, tokens, properties, Clock.fixed(NOW, ZoneOffset.UTC));
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("GRANTED")));
+                credentials, users, tokens, properties, groups, Clock.fixed(NOW, ZoneOffset.UTC));
+        when(users.requireActive(accountId)).thenReturn(account("ACTIVE", "GRANTED"));
+        when(users.requireGatewayEntitled(accountId)).thenReturn(account("ACTIVE", "GRANTED"));
+        when(users.findById(accountId)).thenReturn(Optional.of(account("ACTIVE", "GRANTED")));
     }
 
     @Test
@@ -70,7 +74,7 @@ class GatewayCredentialServiceTest {
     @Test
     void listingNeverReturnsTheSecret() {
         Row row = new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                new byte[32], "arg_gw_abcdef", NOW, null, null);
+                new byte[32], "arg_gw_abcdef", NOW, null, null, null);
         when(credentials.forAccount(accountId)).thenReturn(List.of(row));
 
         List<GatewayCredentialService.Summary> summaries = service.list(accountId);
@@ -82,7 +86,8 @@ class GatewayCredentialServiceTest {
 
     @Test
     void refusesIssueWithoutGatewayEntitlement() {
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("REVOKED")));
+        when(users.requireGatewayEntitled(accountId))
+                .thenThrow(new APIException("GATEWAY_NOT_ENTITLED", "not entitled"));
 
         APIException exception = assertThrows(
                 APIException.class,
@@ -110,7 +115,7 @@ class GatewayCredentialServiceTest {
     void refusesDuplicateActiveNames() {
         when(credentials.activeByName(accountId, "laptop")).thenReturn(Optional.of(
                 new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                        new byte[32], "arg_gw_abcdef", NOW, null, null)));
+                        new byte[32], "arg_gw_abcdef", NOW, null, null, null)));
 
         APIException exception = assertThrows(
                 APIException.class,
@@ -133,7 +138,7 @@ class GatewayCredentialServiceTest {
     void authenticatesAnActiveKeyAndRefreshesItsLastUsedTime() {
         String token = "arg_gw_secret";
         Row row = new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                tokens.hash(token), "arg_gw_secret", NOW, null, null);
+                tokens.hash(token), "arg_gw_secret", NOW, null, null, null);
         when(credentials.activeByHash(tokens.hash(token))).thenReturn(Optional.of(row));
 
         GatewayCredentialService.Principal principal = service.authenticate(token);
@@ -158,9 +163,9 @@ class GatewayCredentialServiceTest {
     void rejectsAKeyWhoseAccountLostGatewayPermission() {
         String token = "arg_gw_secret";
         Row row = new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
-                tokens.hash(token), "arg_gw_secret", NOW, null, null);
+                tokens.hash(token), "arg_gw_secret", NOW, null, null, null);
         when(credentials.activeByHash(tokens.hash(token))).thenReturn(Optional.of(row));
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("REVOKED")));
+        when(users.findById(accountId)).thenReturn(Optional.of(account("ACTIVE", "REVOKED")));
 
         APIException exception = assertThrows(
                 APIException.class,
@@ -181,19 +186,17 @@ class GatewayCredentialServiceTest {
         assertEquals("NOT_FOUND", exception.code());
     }
 
-    private AccountRow account(String entitlement) {
-        return new AccountRow(
+    private AppUser account(String status, String entitlement) {
+        return new AppUser(
                 accountId,
+                "keycloak-subject",
                 "person@example.test",
-                "hash",
-                NOW,
-                "VERIFIED",
-                "ENROLLED",
-                scopeId,
+                "Person",
+                status,
                 entitlement,
+                scopeId,
                 NOW,
                 NOW,
-                null,
                 null,
                 0);
     }

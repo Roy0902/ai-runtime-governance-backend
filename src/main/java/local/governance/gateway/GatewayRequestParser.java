@@ -2,7 +2,6 @@ package local.governance.gateway;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -23,7 +22,6 @@ import org.springframework.stereotype.Component;
 public class GatewayRequestParser {
 
     public static final int MAX_MESSAGES = 1_000;
-    public static final int MAX_MESSAGE_BYTES = 65_536;
 
     private static final Set<String> ROLES =
             Set.of("system", "developer", "user", "assistant", "tool", "function");
@@ -103,12 +101,9 @@ public class GatewayRequestParser {
                     "PROTOCOL_UNSUPPORTED",
                     "Only plain-text user messages are supported by this gateway.");
         }
-        int bytes = userText.getBytes(StandardCharsets.UTF_8).length;
-        if (bytes > MAX_MESSAGE_BYTES) {
-            throw new APIException(
-                    "MESSAGE_LIMIT_EXCEEDED",
-                    "The submitted message is too large for guard evaluation.");
-        }
+        // Message text has no separate cap. The request body limit is the only
+        // bound, so agent-generated turns such as compaction summaries are
+        // guarded instead of rejected for being longer than a fixed slice.
 
         boolean stream = body.has("stream") && body.get("stream").isBoolean() && body.get("stream").asBoolean();
         String prefix = canonicalPrefix(canonicalMessages, userIndex);

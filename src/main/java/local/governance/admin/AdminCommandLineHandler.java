@@ -9,23 +9,20 @@ import java.util.Map;
 import java.util.UUID;
 import local.governance.authentication.crypto.SeedKeyProvider;
 import local.governance.authentication.domain.EmailPolicy;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
+import local.governance.admin.AppUserAdminService.AppUserRow;
 import local.governance.config.GovernanceProperties;
 import org.springframework.stereotype.Component;
 
 @Component
 public class AdminCommandLineHandler {
 
-    private final AdminService admin;
-    private final AuthenticationRepository repository;
+    private final AppUserAdminService admin;
     private final SeedKeyProvider keys;
     private final GovernanceProperties properties;
 
-    public AdminCommandLineHandler(AdminService admin, AuthenticationRepository repository, SeedKeyProvider keys,
+    public AdminCommandLineHandler(AppUserAdminService admin, SeedKeyProvider keys,
             GovernanceProperties properties) {
         this.admin = admin;
-        this.repository = repository;
         this.keys = keys;
         this.properties = properties;
     }
@@ -48,7 +45,7 @@ public class AdminCommandLineHandler {
             String accountRef = required(options, "account");
             String reason = required(options, "reason");
             validateReason(reason);
-            AccountRow account = resolve(accountRef);
+            AppUserRow account = resolve(accountRef);
             String confirm = required(options, "confirm");
             if (!account.email().equals(normalizeConfirm(confirm))) {
                 throw new AdminException(2, "USAGE", "confirmation does not match the account");
@@ -58,11 +55,12 @@ public class AdminCommandLineHandler {
             Map<String, Object> result = switch (group + "/" + action) {
                 case "account/disable" -> admin.disable(account, reason, operator, correlationId);
                 case "account/enable" -> admin.enable(account, reason, operator, correlationId);
-                case "account/recover-mfa" -> admin.recoverMfa(account, reason, operator, correlationId);
+                case "account/recover-mfa" -> throw new AdminException(
+                        2, "USAGE", "Authenticator recovery is handled by Keycloak.");
                 case "gateway/grant" -> admin.grant(account, reason, operator, correlationId);
                 case "gateway/revoke" -> admin.revoke(account, reason, operator, correlationId);
-                case "security/cancel" -> admin.cancel(account, UUID.fromString(required(options, "operation")),
-                        reason, operator, correlationId);
+                case "security/cancel" -> throw new AdminException(
+                        2, "USAGE", "Native security operations are retired.");
                 default -> throw new AdminException(2, "USAGE", "unknown command");
             };
             System.out.println(json(result));
@@ -74,6 +72,8 @@ public class AdminCommandLineHandler {
             System.err.println(json(Map.of("ok", false, "code", "USAGE", "message", "invalid option value")));
             return 2;
         } catch (Exception exception) {
+            System.err.println("admin command failed: "
+                    + exception.getClass().getSimpleName() + ": " + exception.getMessage());
             System.err.println(json(Map.of("ok", false, "code", "DEPENDENCY_UNAVAILABLE",
                     "message", "database or dependency unavailable")));
             return 5;
@@ -126,13 +126,13 @@ public class AdminCommandLineHandler {
         return operator;
     }
 
-    private AccountRow resolve(String reference) {
-        AccountRow account;
+    private AppUserRow resolve(String reference) {
+        AppUserRow account;
         if (reference.contains("@")) {
-            account = repository.accountByEmail(EmailPolicy.normalize(reference)).orElse(null);
+            account = admin.byEmail(EmailPolicy.normalize(reference)).orElse(null);
         } else {
             try {
-                account = repository.accountById(UUID.fromString(reference)).orElse(null);
+                account = admin.byId(UUID.fromString(reference)).orElse(null);
             } catch (IllegalArgumentException exception) {
                 account = null;
             }

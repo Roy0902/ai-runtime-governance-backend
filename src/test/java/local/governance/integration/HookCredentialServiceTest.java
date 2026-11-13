@@ -17,9 +17,9 @@ import java.util.Optional;
 import java.util.UUID;
 import local.governance.api.APIException;
 import local.governance.authentication.crypto.SecureTokenService;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
 import local.governance.integration.HookCredentialRepository.Row;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -31,18 +31,18 @@ class HookCredentialServiceTest {
     private final UUID accountId = UUID.randomUUID();
     private final UUID scopeId = UUID.randomUUID();
     private HookCredentialRepository credentials;
-    private AuthenticationRepository accounts;
+    private AppUserService users;
     private SecureTokenService tokens;
     private HookCredentialService service;
 
     @BeforeEach
     void setUp() {
         credentials = mock(HookCredentialRepository.class);
-        accounts = mock(AuthenticationRepository.class);
+        users = mock(AppUserService.class);
         tokens = new SecureTokenService();
         service = new HookCredentialService(
-                credentials, accounts, tokens, Clock.fixed(NOW, ZoneOffset.UTC));
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(eligibleAccount(scopeId)));
+                credentials, users, tokens, Clock.fixed(NOW, ZoneOffset.UTC));
+        when(users.findById(accountId)).thenReturn(Optional.of(eligibleUser("ACTIVE", scopeId)));
     }
 
     @Test
@@ -95,9 +95,7 @@ class HookCredentialServiceTest {
 
     @Test
     void refusesCredentialIssuanceForAnAccountWithoutCompletedEnrollment() {
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(new AccountRow(
-                accountId, "person@example.test", "hash", NOW, "VERIFIED", "PENDING", scopeId,
-                "ABSENT", NOW, NOW, null, null, 0)));
+        when(users.findById(accountId)).thenReturn(Optional.of(eligibleUser("DISABLED", scopeId)));
 
         APIException exception = assertThrows(
                 APIException.class,
@@ -107,9 +105,18 @@ class HookCredentialServiceTest {
         verify(credentials, org.mockito.Mockito.never()).insert(any());
     }
 
-    private AccountRow eligibleAccount(UUID scope) {
-        return new AccountRow(
-                accountId, "person@example.test", "hash", NOW, "VERIFIED", "ENROLLED", scope,
-                "ABSENT", NOW, NOW, null, null, 0);
+    private AppUser eligibleUser(String status, UUID scope) {
+        return new AppUser(
+                accountId,
+                "keycloak-subject",
+                "person@example.test",
+                "Person",
+                status,
+                "ABSENT",
+                scope,
+                NOW,
+                NOW,
+                null,
+                0);
     }
 }

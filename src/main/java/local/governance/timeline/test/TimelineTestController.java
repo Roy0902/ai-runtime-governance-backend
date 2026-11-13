@@ -75,6 +75,7 @@ public class TimelineTestController {
                     orDefault(trace.telemetryStatus(), "unknown"),
                     trace.guardOutcome(),
                     trace.identity(),
+                    trace.sessionId(),
                     orDefault(trace.inputCoverage(), "unknown"),
                     orDefault(trace.responseCoverage(), "unknown"),
                     orDefault(trace.toolsCoverage(), "unknown"),
@@ -116,7 +117,8 @@ public class TimelineTestController {
                 event.ruleIds() == null ? List.of() : event.ruleIds(),
                 event.approvalId(),
                 event.approvalState(),
-                event.observedStatus()));
+                event.observedStatus(),
+                null));
     }
 
     private UUID scope(String email) {
@@ -250,6 +252,7 @@ public class TimelineTestController {
             String telemetryStatus,
             String guardOutcome,
             String identity,
+            String sessionId,
             String inputCoverage,
             String responseCoverage,
             String toolsCoverage,

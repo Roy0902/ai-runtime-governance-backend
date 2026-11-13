@@ -12,4 +12,5 @@ public record TraceSummaryResponse(
         String executionStatus,
         String telemetryStatus,
         String guardOutcome,
+        String sessionId,
         @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean tombstone) {}

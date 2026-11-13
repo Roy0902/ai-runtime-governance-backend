@@ -349,6 +349,24 @@ public class AuthenticationRepository {
                 .param("now", ts(now)).param("link", linkId).update();
     }
 
+    public void supersedeMailForAccount(UUID accountId, String purpose, Instant now) {
+        jdbc.sql("""
+                UPDATE mail_request
+                SET state = 'SUPERSEDED',
+                    token_nonce = NULL,
+                    token_ciphertext = NULL,
+                    token_key_id = NULL,
+                    updated_at = :now
+                WHERE account_id = :account
+                  AND purpose = :purpose
+                  AND state IN ('PENDING','DELAYED')
+                """)
+                .param("now", ts(now))
+                .param("account", accountId)
+                .param("purpose", purpose)
+                .update();
+    }
+
     public Optional<MailRow> latestMailForAddress(String address) {
         return jdbc.sql("SELECT * FROM mail_request WHERE address = :address ORDER BY created_at DESC LIMIT 1")
                 .param("address", address).query(AuthenticationRepository::mapMail).optional();

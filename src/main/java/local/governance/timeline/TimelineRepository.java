@@ -29,6 +29,7 @@ public class TimelineRepository {
             String telemetryStatus,
             String guardOutcome,
             String identity,
+            String sessionId,
             String inputCoverage,
             String responseCoverage,
             String toolsCoverage,
@@ -55,7 +56,8 @@ public class TimelineRepository {
             List<String> ruleIds,
             UUID approvalId,
             String approvalState,
-            String observedStatus) {}
+            String observedStatus,
+            String content) {}
 
     public record TraversalRow(
             UUID id,
@@ -103,6 +105,23 @@ public class TimelineRepository {
                 .param("scope", scopeId)
                 .param("trace", traceId)
                 .query(TimelineRepository::mapTrace)
+                .optional();
+    }
+
+    /**
+     * Finds the retained trace that already represents a client session. A
+     * session has one trace regardless of how many human turns it contains.
+     */
+    public Optional<UUID> traceIdForSession(UUID scopeId, String sessionId) {
+        return jdbc.sql("""
+                SELECT id FROM activity_trace
+                WHERE scope_id = :scope AND session_id = :session
+                ORDER BY received_at DESC, id DESC
+                LIMIT 1
+                """)
+                .param("scope", scopeId)
+                .param("session", sessionId)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
                 .optional();
     }
 
@@ -156,12 +175,12 @@ public class TimelineRepository {
         jdbc.sql("""
                 INSERT INTO activity_trace (
                     id, scope_id, received_at, execution_status, telemetry_status,
-                    guard_outcome, identity, input_coverage, response_coverage,
+                    guard_outcome, identity, session_id, input_coverage, response_coverage,
                     tools_coverage, loss_cause_code, loss_missing_count, loss_from,
                     loss_to)
                 VALUES (
                     :id, :scope, :receivedAt, :executionStatus, :telemetryStatus,
-                    :guardOutcome, :identity, :inputCoverage, :responseCoverage,
+                    :guardOutcome, :identity, :sessionId, :inputCoverage, :responseCoverage,
                     :toolsCoverage, :lossCauseCode, :lossMissingCount, :lossFrom,
                     :lossTo)
                 """ + conflictClause)
@@ -172,6 +191,7 @@ public class TimelineRepository {
                 .param("telemetryStatus", row.telemetryStatus())
                 .param("guardOutcome", row.guardOutcome())
                 .param("identity", row.identity())
+                .param("sessionId", row.sessionId())
                 .param("inputCoverage", row.inputCoverage())
                 .param("responseCoverage", row.responseCoverage())
                 .param("toolsCoverage", row.toolsCoverage())
@@ -224,13 +244,14 @@ public class TimelineRepository {
                     id, trace_id, scope_id, parent_event_id, kind, received_at,
                     source_at, duration_ms, identity, label, guard_outcome,
                     policy_id, policy_version, rule_ids, approval_id,
-                    approval_state, observed_status)
+                    approval_state, observed_status, content)
                 VALUES (
                     :id, :trace, :scope, :parent, :kind, :receivedAt,
                     :sourceAt, :durationMs, :identity, :label, :guardOutcome,
                     :policyId, :policyVersion,
                     CASE WHEN :rules = '' THEN ARRAY[]::text[] ELSE string_to_array(:rules, ',') END,
-                    :approvalId, :approvalState, :observedStatus)
+                    :approvalId, :approvalState, :observedStatus,
+                    CAST(:content AS jsonb))
                 """)
                 .param("id", row.id())
                 .param("trace", row.traceId())
@@ -249,6 +270,7 @@ public class TimelineRepository {
                 .param("approvalId", row.approvalId())
                 .param("approvalState", row.approvalState())
                 .param("observedStatus", row.observedStatus())
+                .param("content", row.content())
                 .update();
     }
 
@@ -263,6 +285,35 @@ public class TimelineRepository {
                 .param("limit", limit)
                 .query((rs, rowNum) -> rs.getObject("id", UUID.class))
                 .list();
+    }
+
+    public List<UUID> traceIdsAfter(UUID scopeId, Instant afterReceivedAt, UUID afterId, int limit) {
+        return jdbc.sql("""
+                SELECT id FROM activity_trace
+                WHERE scope_id = :scope
+                  AND (received_at, id) > (CAST(:after AS timestamptz), CAST(:afterId AS uuid))
+                ORDER BY received_at ASC, id ASC
+                LIMIT :limit
+                """)
+                .param("scope", scopeId)
+                .param("after", ts(afterReceivedAt))
+                .param("afterId", afterId)
+                .param("limit", limit)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
+                .list();
+    }
+
+    public Optional<UUID> latestPromptEventId(UUID scopeId, UUID traceId) {
+        return jdbc.sql("""
+                SELECT id FROM activity_event
+                WHERE scope_id = :scope AND trace_id = :trace AND kind = 'prompt'
+                ORDER BY received_at DESC, id DESC
+                LIMIT 1
+                """)
+                .param("scope", scopeId)
+                .param("trace", traceId)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
+                .optional();
     }
 
     public List<UUID> eventIds(UUID scopeId, UUID traceId, int limit) {
@@ -433,13 +484,14 @@ public class TimelineRepository {
                     id, trace_id, scope_id, parent_event_id, kind, received_at,
                     source_at, duration_ms, identity, label, guard_outcome,
                     policy_id, policy_version, rule_ids, approval_id,
-                    approval_state, observed_status, content_hash)
+                    approval_state, observed_status, content_hash, content)
                 VALUES (
                     :id, :trace, :scope, :parent, :kind, :receivedAt,
                     :sourceAt, :durationMs, :identity, :label, :guardOutcome,
                     :policyId, :policyVersion,
                     CASE WHEN :rules = '' THEN ARRAY[]::text[] ELSE string_to_array(:rules, ',') END,
-                    :approvalId, :approvalState, :observedStatus, :contentHash)
+                    :approvalId, :approvalState, :observedStatus, :contentHash,
+                    CAST(:content AS jsonb))
                 """)
                 .param("id", row.id())
                 .param("trace", row.traceId())
@@ -459,6 +511,7 @@ public class TimelineRepository {
                 .param("approvalState", row.approvalState())
                 .param("observedStatus", row.observedStatus())
                 .param("contentHash", contentHash)
+                .param("content", row.content())
                 .update();
     }
 
@@ -477,6 +530,7 @@ public class TimelineRepository {
                 rs.getString("telemetry_status"),
                 rs.getString("guard_outcome"),
                 rs.getString("identity"),
+                rs.getString("session_id"),
                 rs.getString("input_coverage"),
                 rs.getString("response_coverage"),
                 rs.getString("tools_coverage"),
@@ -505,7 +559,8 @@ public class TimelineRepository {
                 rules(rs, "rule_ids"),
                 rs.getObject("approval_id", UUID.class),
                 rs.getString("approval_state"),
-                rs.getString("observed_status"));
+                rs.getString("observed_status"),
+                rs.getString("content"));
     }
 
     private static TraversalRow mapTraversal(ResultSet rs, int rowNum) throws SQLException {

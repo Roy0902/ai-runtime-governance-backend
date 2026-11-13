@@ -34,8 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AuthenticationService {
 
-    public static final String ACCEPTED =
-            "If this request is eligible, we'll send an email with the next steps.";
+    public static final String REGISTERED = "Account created. Check your email to verify your address.";
+    public static final String REQUEST_ACCEPTED = "Request received.";
 
     private final AuthenticationRepository repository;
     private final PasswordHashService passwords;
@@ -99,16 +99,19 @@ public class AuthenticationService {
         String email = EmailPolicy.normalize(body.email());
         PasswordPolicy.validateNew(body.password(), "password");
         rateLimit.admit(RateLimitService.SIGNUP_SOURCE, rateLimit.sourceKey(request), Duration.ofHours(1), 10, 3600);
-        rateLimit.checkMailIdentity(email);
 
         if (repository.accountByEmail(email).isPresent()) {
-            return new AcceptedMailResponse(ACCEPTED);
+            throw new APIException(
+                    "EMAIL_ALREADY_REGISTERED",
+                    "An account with this email already exists. Sign in or reset your password.");
         }
+
+        rateLimit.checkMailIdentity(email);
         String hash = hashLimiter.submit(() -> passwords.hash(body.password()));
         UUID accountId = UUID.randomUUID();
         repository.insertAccount(accountId, email, hash, clock.instant());
         mailService.issueVerification(accountId, email);
-        return new AcceptedMailResponse(ACCEPTED);
+        return new AcceptedMailResponse(REGISTERED);
     }
 
     @Transactional
@@ -127,6 +130,8 @@ public class AuthenticationService {
         if (faults.enabled("consume-rollback")) {
             throw APIException.unavailable();
         }
+        repository.supersedeCurrentLinks(link.accountId(), "VERIFY", now);
+        repository.supersedeMailForAccount(link.accountId(), "VERIFY", now);
         AccountRow account = repository.accountById(link.accountId()).orElseThrow(APIException::notFound);
         if (account.emailVerifiedAt() == null) {
             repository.markVerified(account.id(), now);
@@ -134,12 +139,15 @@ public class AuthenticationService {
         if ("NONE".equals(account.mfaState())) {
             repository.setMfaState(account.id(), "PENDING", now);
         }
-        SessionService.Current before = sessions.read(request).orElse(null);
-        SessionService.Current current = before == null
-                ? sessions.create(response, "SETUP", account.id(), "INITIAL_ENROLLMENT", null)
-                : sessions.rotate(response, before, "SETUP", account.id(), "INITIAL_ENROLLMENT", null);
+        // Email verification is not authentication. Keep the caller's existing
+        // context (or an anonymous one) and require a password sign-in before
+        // authenticator enrollment can begin.
+        if (sessions.read(request).isPresent()) {
+            return context(request, response);
+        }
+        SessionService.Current anonymous = sessions.anonymous(request, response);
         AccountRow updated = repository.accountById(account.id()).orElse(account);
-        return contexts.context(current, updated);
+        return contexts.context(anonymous, updated);
     }
 
     @Transactional
@@ -153,7 +161,7 @@ public class AuthenticationService {
         repository.accountByEmail(email)
                 .filter((account) -> "PENDING".equals(account.status()) && account.emailVerifiedAt() == null)
                 .ifPresent((account) -> mailService.issueVerification(account.id(), account.email()));
-        return new AcceptedMailResponse(ACCEPTED);
+        return new AcceptedMailResponse(REQUEST_ACCEPTED);
     }
 
     @Transactional
@@ -167,7 +175,7 @@ public class AuthenticationService {
         repository.accountByEmail(email)
                 .filter((account) -> account.emailVerifiedAt() != null && !"DISABLED".equals(account.status()))
                 .ifPresent((account) -> mailService.issueReset(account.id(), account.email()));
-        return new AcceptedMailResponse(ACCEPTED);
+        return new AcceptedMailResponse(REQUEST_ACCEPTED);
     }
 
     @Transactional
@@ -187,6 +195,8 @@ public class AuthenticationService {
         if (!repository.consumeLink(link.id(), now)) {
             throw new APIException("LINK_NOT_USABLE", "This link can't be used. Request a new email.");
         }
+        repository.supersedeCurrentLinks(link.accountId(), "RESET", now);
+        repository.supersedeMailForAccount(link.accountId(), "RESET", now);
         repository.updatePassword(link.accountId(), hash, now);
         repository.revokeAllSessions(link.accountId(), now);
         sessions.clearCookie(response);
@@ -214,11 +224,7 @@ public class AuthenticationService {
         }
         rateLimit.clearFailures(email);
         String purpose = account.recoveryRequiredAt() == null ? "INITIAL_ENROLLMENT" : "RECOVERY_ENROLLMENT";
-        SessionService.Current before = sessions.read(request).orElse(null);
-        SessionService.Current current = before == null
-                ? sessions.create(response, "SETUP", account.id(), purpose, null)
-                : sessions.rotate(response, before, "SETUP", account.id(), purpose, null);
-        return contexts.context(current, account);
+        return beginSetup(account, purpose, request, response);
     }
 
     public AuthenticationContextResponse signIn(SignInRequest body, HttpServletRequest request, HttpServletResponse response) {
@@ -234,8 +240,7 @@ public class AuthenticationService {
         if (verification == PasswordHashService.Verification.FAILED) {
             throw credentialFailure(email);
         }
-        if (!"VERIFIED".equals(account.status()) || !"ENROLLED".equals(account.mfaState())
-                || account.recoveryRequiredAt() != null) {
+        if (!"VERIFIED".equals(account.status())) {
             throw credentialFailure(email);
         }
         long sessionVersion = account.version();
@@ -247,7 +252,27 @@ public class AuthenticationService {
             }
             sessionVersion++;
         }
+        if (!"ENROLLED".equals(account.mfaState()) || account.recoveryRequiredAt() != null) {
+            // The password was accepted, but this account has not completed
+            // authenticator enrollment (or must recover it). Sign-in now starts
+            // the setup session instead of requiring enrollment before login.
+            rateLimit.clearFailures(email);
+            String purpose = account.recoveryRequiredAt() != null
+                    || "RECOVERY_REQUIRED".equals(account.mfaState())
+                    ? "RECOVERY_ENROLLMENT"
+                    : "INITIAL_ENROLLMENT";
+            return beginSetup(account, purpose, request, response);
+        }
         rateLimit.clearFailures(email);
+        if (body.secondFactor() == null) {
+            // The password is correct, but a second factor is required. Do not
+            // open a human session yet; the client asks for the code next.
+            SessionService.Current current = sessions.read(request).orElse(null);
+            if (current == null) {
+                current = sessions.anonymous(request, response);
+            }
+            return new AuthenticationContextResponse("MFA_REQUIRED", current.csrfToken(), null, null, null);
+        }
         try {
             return authenticationFinalizer.complete(account.id(), sessionVersion, body.secondFactor(),
                     request, response);
@@ -287,6 +312,15 @@ public class AuthenticationService {
         AccountRow account = repository.accountById(current.accountId()).orElseThrow(APIException::signInRequired);
         sessions.touch(current);
         return contexts.account(account, current);
+    }
+
+    private AuthenticationContextResponse beginSetup(AccountRow account, String purpose,
+            HttpServletRequest request, HttpServletResponse response) {
+        SessionService.Current before = sessions.read(request).orElse(null);
+        SessionService.Current current = before == null
+                ? sessions.create(response, "SETUP", account.id(), purpose, null)
+                : sessions.rotate(response, before, "SETUP", account.id(), purpose, null);
+        return contexts.context(current, account);
     }
 
     private APIException credentialFailure(String email) {

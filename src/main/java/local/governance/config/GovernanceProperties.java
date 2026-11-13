@@ -17,6 +17,7 @@ public class GovernanceProperties {
     private TimelineProperties timeline = new TimelineProperties();
     private GatewayProperties gateway = new GatewayProperties();
     private LangfuseProperties langfuse = new LangfuseProperties();
+    private CredentialProperties credentials = new CredentialProperties();
     private PricingProperties pricing = new PricingProperties();
 
     public String getBaseUrl() {
@@ -82,12 +83,32 @@ public class GovernanceProperties {
         this.langfuse = langfuse;
     }
 
+    public CredentialProperties getCredentials() {
+        return credentials;
+    }
+
+    public void setCredentials(CredentialProperties credentials) {
+        this.credentials = credentials;
+    }
+
     public PricingProperties getPricing() {
         return pricing;
     }
 
     public void setPricing(PricingProperties pricing) {
         this.pricing = pricing;
+    }
+
+    public static class CredentialProperties {
+        private String keyDir = System.getProperty("user.home") + "/.arg/keys";
+
+        public String getKeyDir() {
+            return keyDir;
+        }
+
+        public void setKeyDir(String keyDir) {
+            this.keyDir = keyDir;
+        }
     }
 
     public static class PricingProperties {
@@ -146,7 +167,12 @@ public class GovernanceProperties {
         }
 
         public void setCurrency(String currency) {
-            this.currency = currency == null || currency.isBlank() ? "USD" : currency;
+            String value = currency == null || currency.isBlank() ? "USD" : currency.trim();
+            if (!"USD".equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException(
+                        "Only USD pricing is supported; remove 'currency' or set it to USD.");
+            }
+            this.currency = "USD";
         }
     }
 

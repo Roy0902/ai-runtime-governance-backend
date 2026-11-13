@@ -90,6 +90,7 @@ public class ActivityMetadataService {
                 "unknown",
                 null,
                 integration,
+                null,
                 "unknown",
                 "unknown",
                 "unknown",
@@ -130,7 +131,8 @@ public class ActivityMetadataService {
                 rules,
                 event.approvalId,
                 event.approvalState,
-                event.observedStatus), hash);
+                event.observedStatus,
+                null), hash);
         timeline.observeHookCoverage(scope, traceId, event.kind);
         return new AcceptResult(true, false);
     }

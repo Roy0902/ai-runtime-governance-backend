@@ -1,5 +1,6 @@
 package local.governance.gateway;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -29,21 +30,29 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 public class GatewayService {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayService.class);
+    private static final int MAX_SESSION_ID_LENGTH = 128;
 
     public record ProxyResponse(int status, HttpHeaders headers, StreamingResponseBody body) {}
 
     private record Prepared(
             UUID traceId,
             UUID scopeId,
+            UUID accountId,
+            UUID groupId,
             UUID credentialId,
             String conversationKey,
+            String sessionId,
+            String userEmail,
+            String userName,
+            String groupName,
             String clientConversationId,
             String clientUserAgent,
             String model,
             byte[] body,
             boolean stream,
             String prompt,
-            String guardOutcome) {}
+            String guardOutcome,
+            UUID promptEventId) {}
 
     private final GovernanceProperties properties;
     private final GatewayRequestParser parser;
@@ -58,6 +67,7 @@ public class GatewayService {
     private final GatewayOutputPersistence outputPersistence;
     private final GatewayRateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
+    private final ContentSanitizer sanitizer;
     private final Optional<GatewayObservationExporter> observationExporter;
 
     public GatewayService(
@@ -88,6 +98,7 @@ public class GatewayService {
         this.outputPersistence = outputPersistence;
         this.rateLimiter = rateLimiter;
         this.objectMapper = objectMapper;
+        this.sanitizer = new ContentSanitizer(objectMapper);
         this.observationExporter = observationExporter;
     }
 
@@ -100,6 +111,15 @@ public class GatewayService {
             byte[] rawBody,
             String clientConversationId,
             String clientUserAgent) {
+        return exchange(principal, rawBody, clientConversationId, clientUserAgent, null);
+    }
+
+    public ProxyResponse exchange(
+            Principal principal,
+            byte[] rawBody,
+            String clientConversationId,
+            String clientUserAgent,
+            String agentSessionId) {
         GovernanceProperties.GatewayProperties gateway = properties.getGateway();
         if (!gateway.isEnabled()) {
             throw new APIException("GATEWAY_DISABLED", "The model gateway is disabled.");
@@ -122,7 +142,7 @@ public class GatewayService {
         }
 
         Prepared prepared = prepare(
-                principal, parsed, rawBody, clientConversationId, clientUserAgent);
+                principal, parsed, rawBody, clientConversationId, clientUserAgent, agentSessionId);
 
         if (!rateLimiter.acquireUpstream()) {
             throw new APIException(
@@ -156,6 +176,7 @@ public class GatewayService {
             usage.record(new ModelUsageRecorder.Usage(
                     prepared.scopeId(),
                     prepared.traceId(),
+                    null,
                     prepared.credentialId(),
                     prepared.conversationKey(),
                     prepared.clientConversationId(),
@@ -191,7 +212,8 @@ public class GatewayService {
                     code,
                     truncate(exception.getMessage()),
                     Map.of(),
-                    Map.of()));
+                    Map.of(),
+                    null));
         } catch (RuntimeException recordFailure) {
             log.warn("gateway dispatch usage could not be recorded", recordFailure);
         }
@@ -202,13 +224,15 @@ public class GatewayService {
             Parsed parsed,
             byte[] rawBody,
             String clientConversationId,
-            String clientUserAgent) {
+            String clientUserAgent,
+            String agentSessionId) {
+        String sessionId = sessionId(principal.scopeId(), clientConversationId, agentSessionId);
         if (parsed.mode() == GatewayRequestParser.Mode.NEW_TURN) {
             return prepareNewTurn(
-                    principal, parsed, rawBody, clientConversationId, clientUserAgent);
+                    principal, parsed, rawBody, clientConversationId, clientUserAgent, sessionId);
         }
         return prepareContinuation(
-                principal, parsed, rawBody, clientConversationId, clientUserAgent);
+                principal, parsed, rawBody, clientConversationId, clientUserAgent, sessionId);
     }
 
     private Prepared prepareNewTurn(
@@ -216,9 +240,11 @@ public class GatewayService {
             Parsed parsed,
             byte[] rawBody,
             String clientConversationId,
-            String clientUserAgent) {
+            String clientUserAgent,
+            String sessionId) {
         GatewayGuardrail.Decision decision = guardrail.evaluate(parsed.userText());
-        UUID traceId = UUID.randomUUID();
+        UUID traceId = traces.resolveTraceId(principal.scopeId(), sessionId);
+        String promptContent = promptContent(parsed.userText());
 
         if (decision.failed()) {
             traces.blocked(
@@ -229,7 +255,9 @@ public class GatewayService {
                     GatewayGuardrail.POLICY_ID,
                     GatewayGuardrail.POLICY_VERSION,
                     List.of(),
-                    true);
+                    true,
+                    promptContent,
+                    sessionId);
             throw new APIException(
                     "GUARD_EVALUATION_FAILED",
                     "The prompt guard could not evaluate this message, so it was not forwarded.");
@@ -243,7 +271,9 @@ public class GatewayService {
                     GatewayGuardrail.POLICY_ID,
                     GatewayGuardrail.POLICY_VERSION,
                     decision.ruleIds(),
-                    false);
+                    false,
+                    promptContent,
+                    sessionId);
             throw new APIException("GUARD_DENIED", "The governance guard denied this prompt.");
         }
         if (decision.outcome() == GuardOutcome.REQUIRE_APPROVAL) {
@@ -255,7 +285,9 @@ public class GatewayService {
                     GatewayGuardrail.POLICY_ID,
                     GatewayGuardrail.POLICY_VERSION,
                     decision.ruleIds(),
-                    false);
+                    false,
+                    promptContent,
+                    sessionId);
             throw new APIException(
                     "GUARD_APPROVAL_REQUIRED",
                     "This prompt requires the submitter's approval before it can be forwarded.");
@@ -265,8 +297,11 @@ public class GatewayService {
                 parsed,
                 rewrite(parsed.body(), parsed.userMessageIndex(), decision.message(), rawBody));
         String conversationKey = conversations.key(
-                principal.scopeId(), parsed.model(), parsed.canonicalPrefix(), clientConversationId);
-        turnRecorder.recordGuardedTurn(
+                principal.scopeId(),
+                parsed.model(),
+                parsed.canonicalPrefix(),
+                sessionId != null ? sessionId : clientConversationId);
+        UUID promptEventId = turnRecorder.recordGuardedTurn(
                 principal.scopeId(),
                 traceId,
                 parsed.model(),
@@ -275,19 +310,28 @@ public class GatewayService {
                 GatewayGuardrail.POLICY_VERSION,
                 decision.ruleIds(),
                 conversationKey,
-                conversations.messageHash(parsed.userText()));
+                conversations.messageHash(parsed.userText()),
+                promptContent,
+                sessionId);
         return new Prepared(
                 traceId,
                 principal.scopeId(),
+                principal.accountId(),
+                principal.groupId(),
                 principal.credentialId(),
                 conversationKey,
+                sessionId,
+                principal.email(),
+                principal.displayName(),
+                principal.groupName(),
                 clientConversationId,
                 clientUserAgent,
                 parsed.model(),
                 forwardBody,
                 parsed.stream(),
                 decision.outcome() == GuardOutcome.REDACT ? decision.message() : parsed.userText(),
-                decision.outcome().name().toLowerCase(java.util.Locale.ROOT));
+                decision.outcome().name().toLowerCase(java.util.Locale.ROOT),
+                promptEventId);
     }
 
     private Prepared prepareContinuation(
@@ -295,26 +339,43 @@ public class GatewayService {
             Parsed parsed,
             byte[] rawBody,
             String clientConversationId,
-            String clientUserAgent) {
+            String clientUserAgent,
+            String sessionId) {
         String conversationKey = conversations.key(
-                principal.scopeId(), parsed.model(), parsed.canonicalPrefix(), clientConversationId);
+                principal.scopeId(),
+                parsed.model(),
+                parsed.canonicalPrefix(),
+                sessionId != null ? sessionId : clientConversationId);
         Optional<Row> found = conversations.find(principal.scopeId(), conversationKey);
         if (found.isEmpty()) {
             if (properties.getGateway().isAllowUnguardedContinuation()) {
-                UUID traceId = UUID.randomUUID();
-                turnRecorder.recordBypassedTurn(principal.scopeId(), traceId, parsed.model());
+                UUID traceId = traces.resolveTraceId(principal.scopeId(), sessionId);
+                UUID promptEventId =
+                        turnRecorder.recordBypassedTurn(
+                                principal.scopeId(),
+                                traceId,
+                                parsed.model(),
+                                promptContent(parsed.userText()),
+                                sessionId);
                 return new Prepared(
                         traceId,
                         principal.scopeId(),
+                        principal.accountId(),
+                        principal.groupId(),
                         principal.credentialId(),
                         conversationKey,
+                        sessionId,
+                        principal.email(),
+                        principal.displayName(),
+                        principal.groupName(),
                         clientConversationId,
                         clientUserAgent,
                         parsed.model(),
                         rawBody,
                         parsed.stream(),
                         null,
-                        null);
+                        null,
+                        promptEventId);
             }
             throw new APIException(
                     "GUARD_CONTEXT_UNKNOWN",
@@ -333,15 +394,50 @@ public class GatewayService {
         return new Prepared(
                 conversation.traceId(),
                 principal.scopeId(),
+                principal.accountId(),
+                principal.groupId(),
                 principal.credentialId(),
                 conversationKey,
+                sessionId,
+                principal.email(),
+                principal.displayName(),
+                principal.groupName(),
                 clientConversationId,
                 clientUserAgent,
                 parsed.model(),
                 forwardBody,
                 parsed.stream(),
                 null,
-                conversation.guardOutcome());
+                conversation.guardOutcome(),
+                null);
+    }
+
+    /**
+     * Builds the session id used for local trace and Langfuse grouping from a
+     * client-supplied agent session or conversation header. The scope is
+     * prefixed so two accounts cannot merge their sessions, and unusable values
+     * fall back to the next candidate instead of failing the model request.
+     */
+    private static String sessionId(UUID scopeId, String clientConversationId, String agentSessionId) {
+        // The agent session header identifies the real client session. The
+        // conversation header is only a fallback because setup presets may use
+        // a fixed value that would collapse every session into one.
+        String value = validSessionId(agentSessionId);
+        if (value == null) {
+            value = validSessionId(clientConversationId);
+        }
+        return value == null ? null : scopeId + ":" + value;
+    }
+
+    private static String validSessionId(String candidate) {
+        if (candidate == null) {
+            return null;
+        }
+        String value = candidate.trim();
+        if (value.isEmpty() || value.length() > MAX_SESSION_ID_LENGTH) {
+            return null;
+        }
+        return value.matches("[A-Za-z0-9][A-Za-z0-9._:-]*") ? value : null;
     }
 
     private ProxyResponse proxy(Prepared prepared, HttpResponse<InputStream> response) {
@@ -413,9 +509,15 @@ public class GatewayService {
                 result.cachedInputTokens(),
                 result.reasoningOutputTokens());
 
+        String observationId = observationExporter
+                .map(exporter -> export(exporter, prepared, result, cost, finalStatus, durationMs))
+                .orElse(null);
+        UUID eventId = Uuid7.generate();
+
         ModelUsageRecorder.Usage usageRecord = new ModelUsageRecorder.Usage(
                     prepared.scopeId(),
                     prepared.traceId(),
+                    eventId,
                     prepared.credentialId(),
                     prepared.conversationKey(),
                     prepared.clientConversationId(),
@@ -451,15 +553,10 @@ public class GatewayService {
                     result.errorCode(),
                     result.errorMessage(),
                     result.rawUsage(),
-                    safeHeaders(response));
+                    safeHeaders(response),
+                    observationId);
         int recordedDurationMs = (int) Math.min(Integer.MAX_VALUE, durationMs);
         outputPersistence.submit(() -> {
-            try {
-                usage.record(usageRecord);
-            } catch (RuntimeException exception) {
-                log.warn("gateway model usage could not be recorded", exception);
-            }
-
             try {
                 traces.complete(
                         prepared.scopeId(),
@@ -467,35 +564,91 @@ public class GatewayService {
                         prepared.model(),
                         finalStatus,
                         result.finishReason(),
-                        recordedDurationMs);
+                        recordedDurationMs,
+                        eventId,
+                        prepared.promptEventId(),
+                        modelContent(result),
+                        result.toolCalls());
             } catch (RuntimeException exception) {
                 log.warn("gateway trace completion could not be recorded", exception);
             }
-        });
-        observationExporter.ifPresent(exporter -> {
+
             try {
-                exporter.export(new GatewayObservationExporter.Observation(
-                        prepared.scopeId(),
-                        prepared.traceId(),
-                        prepared.conversationKey(),
-                        prepared.model(),
-                        prepared.prompt(),
-                        result.output(),
-                        finalStatus,
-                        toInteger(result.inputTokens()),
-                        toInteger(result.outputTokens()),
-                        toInteger(result.cachedInputTokens()),
-                        toInteger(result.reasoningOutputTokens()),
-                        toInteger(result.totalTokens()),
-                        result.providerReportedCostUsd(),
-                        cost.totalUsd(),
-                        result.finishReason(),
-                        durationMs,
-                        prepared.guardOutcome()));
+                usage.record(usageRecord);
             } catch (RuntimeException exception) {
-                log.warn("gateway observation export failed", exception);
+                log.warn("gateway model usage could not be recorded", exception);
             }
         });
+    }
+
+    private String promptContent(String text) {
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("text", text);
+        try {
+            return sanitizer.clean(objectMapper.writeValueAsString(content));
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
+    }
+
+    private String modelContent(GatewayResponseCapture.Capture result) {
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("output", result.output());
+        content.put("reasoning", result.reasoning());
+        content.put("finishReasons", result.finishReasons());
+        if (!result.toolCalls().isEmpty()) {
+            content.put("toolCalls", result.toolCalls().stream()
+                    .map((call) -> {
+                        Map<String, Object> value = new LinkedHashMap<>();
+                        value.put("id", call.id());
+                        value.put("name", call.name());
+                        value.put("arguments", call.arguments());
+                        return value;
+                    })
+                    .toList());
+        }
+        try {
+            return sanitizer.clean(objectMapper.writeValueAsString(content));
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
+    }
+
+    private String export(
+            GatewayObservationExporter exporter,
+            Prepared prepared,
+            GatewayResponseCapture.Capture result,
+            GatewayPricing.Cost cost,
+            String status,
+            long durationMs) {
+        try {
+            return exporter.export(new GatewayObservationExporter.Observation(
+                    prepared.scopeId(),
+                    prepared.accountId(),
+                    prepared.groupId(),
+                    prepared.traceId(),
+                    prepared.sessionId(),
+                    prepared.model(),
+                    prepared.prompt(),
+                    result.output(),
+                    status,
+                    toInteger(result.inputTokens()),
+                    toInteger(result.outputTokens()),
+                    toInteger(result.cachedInputTokens()),
+                    toInteger(result.reasoningOutputTokens()),
+                    toInteger(result.totalTokens()),
+                    result.providerReportedCostUsd(),
+                    cost.totalUsd(),
+                    result.finishReason(),
+                    durationMs,
+                    prepared.guardOutcome(),
+                    prepared.userEmail(),
+                    prepared.userName(),
+                    prepared.groupName()));
+        } catch (RuntimeException exception) {
+            log.warn("gateway observation export failed", exception);
+            return null;
+        }
     }
 
     private static Map<String, String> safeHeaders(HttpResponse<?> response) {

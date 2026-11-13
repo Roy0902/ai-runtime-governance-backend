@@ -10,12 +10,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import local.governance.api.APIException;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
-import local.governance.authentication.session.SessionService;
 import local.governance.gateway.api.ModelUsageResponse;
 import local.governance.gateway.api.UsageGroupResponse;
 import local.governance.gateway.api.UsageSummaryResponse;
+import local.governance.security.AppUserService;
 import local.governance.timeline.TimelineRepository;
 import org.springframework.stereotype.Service;
 
@@ -26,24 +24,24 @@ public class UsageReadService {
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
     private static final Duration MAX_RANGE = Duration.ofDays(366);
 
-    private final SessionService sessions;
-    private final AuthenticationRepository accounts;
+    private final AppUserService users;
     private final TimelineRepository timeline;
     private final ModelUsageRepository usage;
+    private final LangfuseObservationClient observations;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
     public UsageReadService(
-            SessionService sessions,
-            AuthenticationRepository accounts,
+            AppUserService users,
             TimelineRepository timeline,
             ModelUsageRepository usage,
+            LangfuseObservationClient observations,
             ObjectMapper objectMapper,
             Clock clock) {
-        this.sessions = sessions;
-        this.accounts = accounts;
+        this.users = users;
         this.timeline = timeline;
         this.usage = usage;
+        this.observations = observations;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -53,6 +51,16 @@ public class UsageReadService {
         UUID traceId = traceId(rawTraceId);
         timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
         return usage.forTrace(scope, traceId).stream().map(this::response).toList();
+    }
+
+    public LangfuseObservationClient.ObservationContent observation(
+            HttpServletRequest request, String rawTraceId, String observationId) {
+        UUID scope = scope(request);
+        UUID traceId = traceId(rawTraceId);
+        timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
+        ModelUsageRow row = usage.findByObservationId(scope, traceId, observationId)
+                .orElseThrow(APIException::notFound);
+        return observations.fetch(traceId, observationId, row.receivedAt());
     }
 
     public UsageSummaryResponse summary(HttpServletRequest request, String rawFrom, String rawTo) {
@@ -100,6 +108,7 @@ public class UsageReadService {
         return new ModelUsageResponse(
                 row.id(),
                 row.traceId(),
+                row.eventId(),
                 row.credentialId(),
                 row.clientConversationId(),
                 row.clientUserAgent(),
@@ -135,6 +144,7 @@ public class UsageReadService {
                 row.errorMessage(),
                 object(row.providerUsageJson()),
                 strings(row.responseHeadersJson()),
+                row.langfuseObservationId(),
                 row.receivedAt());
     }
 
@@ -161,10 +171,7 @@ public class UsageReadService {
     }
 
     private UUID scope(HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        return accounts.accountById(current.accountId())
-                .map(AccountRow::scopeId)
-                .orElseThrow(APIException::notFound);
+        return users.requireScopeId();
     }
 
     private static UUID traceId(String raw) {
