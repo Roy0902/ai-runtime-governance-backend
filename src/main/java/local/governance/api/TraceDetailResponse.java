@@ -12,5 +12,6 @@ public record TraceDetailResponse(
         String telemetryStatus,
         String guardOutcome,
         String identity,
+        String sessionId,
         CoverageResponse coverage,
         LossResponse loss) {}

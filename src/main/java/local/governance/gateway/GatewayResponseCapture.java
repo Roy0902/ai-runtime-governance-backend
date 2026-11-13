@@ -22,6 +22,8 @@ public class GatewayResponseCapture {
     private static final int MAX_ERROR_MESSAGE = 500;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
+    public record ToolCall(String id, String name, String arguments) {}
+
     public record Capture(
             String output,
             String finishReason,
@@ -42,7 +44,9 @@ public class GatewayResponseCapture {
             Map<String, Object> rawUsage,
             String errorType,
             String errorCode,
-            String errorMessage) {}
+            String errorMessage,
+            List<ToolCall> toolCalls,
+            String reasoning) {}
 
     private final ObjectMapper objectMapper;
 
@@ -74,6 +78,7 @@ public class GatewayResponseCapture {
                     finish(choice, accumulator);
                     JsonNode message = choice.path("message");
                     content(message.path("content"), accumulator);
+                    reasoning(message, accumulator);
                     toolCalls(message.path("tool_calls"), accumulator);
                 }
             }
@@ -116,10 +121,12 @@ public class GatewayResponseCapture {
                     finish(choice, accumulator);
                     JsonNode delta = choice.path("delta");
                     content(delta.path("content"), accumulator);
+                    reasoning(delta, accumulator);
                     toolCalls(delta.path("tool_calls"), accumulator);
                     if (delta.isEmpty()) {
                         JsonNode message = choice.path("message");
                         content(message.path("content"), accumulator);
+                        reasoning(message, accumulator);
                         toolCalls(message.path("tool_calls"), accumulator);
                     }
                 }
@@ -198,17 +205,41 @@ public class GatewayResponseCapture {
         }
     }
 
+    private static void reasoning(JsonNode node, Accumulator accumulator) {
+        text(node.path("reasoning"), accumulator.reasoning::append);
+        text(node.path("reasoning_content"), accumulator.reasoning::append);
+    }
+
     private static void toolCalls(JsonNode toolCalls, Accumulator accumulator) {
         if (!toolCalls.isArray()) {
             return;
         }
+        int position = 0;
         for (JsonNode toolCall : toolCalls) {
+            String index = toolCall.path("index").isNumber()
+                    ? toolCall.path("index").asText()
+                    : null;
+            String id = string(toolCall.path("id"));
+            String key = index != null ? "i:" + index : id != null ? "id:" + id : "n:" + position;
+            position += 1;
+            ToolCallBuilder builder = accumulator.toolCalls.computeIfAbsent(key, (ignored) -> new ToolCallBuilder());
+            if (id != null && !id.isBlank() && builder.id == null) {
+                builder.id = id;
+            }
             String name = string(toolCall.path("function").path("name"));
             if (name == null) {
                 name = string(toolCall.path("name"));
             }
             if (name != null && !name.isBlank()) {
+                builder.name = name;
                 accumulator.toolCallNames.add(name);
+            }
+            String arguments = string(toolCall.path("function").path("arguments"));
+            if (arguments == null) {
+                arguments = string(toolCall.path("arguments"));
+            }
+            if (arguments != null) {
+                builder.arguments.append(arguments);
             }
         }
     }
@@ -258,8 +289,10 @@ public class GatewayResponseCapture {
 
     private static final class Accumulator {
         private final StringBuilder text = new StringBuilder();
+        private final StringBuilder reasoning = new StringBuilder();
         private final Set<String> finishReasons = new LinkedHashSet<>();
         private final Set<String> toolCallNames = new LinkedHashSet<>();
+        private final Map<String, ToolCallBuilder> toolCalls = new LinkedHashMap<>();
         private Long inputTokens;
         private Long outputTokens;
         private Long cachedInputTokens;
@@ -314,7 +347,20 @@ public class GatewayResponseCapture {
                     rawUsage == null ? Map.of() : new LinkedHashMap<>(rawUsage),
                     errorType,
                     errorCode,
-                    errorMessage);
+                    errorMessage,
+                    toolCalls.values().stream()
+                            .map((builder) -> new ToolCall(
+                                    builder.id,
+                                    builder.name,
+                                    builder.arguments.isEmpty() ? null : builder.arguments.toString()))
+                            .toList(),
+                    reasoning.isEmpty() ? null : reasoning.toString());
         }
+    }
+
+    private static final class ToolCallBuilder {
+        private String id;
+        private String name;
+        private final StringBuilder arguments = new StringBuilder();
     }
 }

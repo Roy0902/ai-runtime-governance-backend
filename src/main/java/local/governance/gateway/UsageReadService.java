@@ -27,6 +27,7 @@ public class UsageReadService {
     private final AppUserService users;
     private final TimelineRepository timeline;
     private final ModelUsageRepository usage;
+    private final LangfuseObservationClient observations;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -34,11 +35,13 @@ public class UsageReadService {
             AppUserService users,
             TimelineRepository timeline,
             ModelUsageRepository usage,
+            LangfuseObservationClient observations,
             ObjectMapper objectMapper,
             Clock clock) {
         this.users = users;
         this.timeline = timeline;
         this.usage = usage;
+        this.observations = observations;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -48,6 +51,16 @@ public class UsageReadService {
         UUID traceId = traceId(rawTraceId);
         timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
         return usage.forTrace(scope, traceId).stream().map(this::response).toList();
+    }
+
+    public LangfuseObservationClient.ObservationContent observation(
+            HttpServletRequest request, String rawTraceId, String observationId) {
+        UUID scope = scope(request);
+        UUID traceId = traceId(rawTraceId);
+        timeline.trace(scope, traceId).orElseThrow(APIException::notFound);
+        ModelUsageRow row = usage.findByObservationId(scope, traceId, observationId)
+                .orElseThrow(APIException::notFound);
+        return observations.fetch(traceId, observationId, row.receivedAt());
     }
 
     public UsageSummaryResponse summary(HttpServletRequest request, String rawFrom, String rawTo) {
@@ -95,6 +108,7 @@ public class UsageReadService {
         return new ModelUsageResponse(
                 row.id(),
                 row.traceId(),
+                row.eventId(),
                 row.credentialId(),
                 row.clientConversationId(),
                 row.clientUserAgent(),
@@ -130,6 +144,7 @@ public class UsageReadService {
                 row.errorMessage(),
                 object(row.providerUsageJson()),
                 strings(row.responseHeadersJson()),
+                row.langfuseObservationId(),
                 row.receivedAt());
     }
 
