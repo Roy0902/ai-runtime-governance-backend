@@ -5,8 +5,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
 import java.util.UUID;
 import local.governance.api.APIException;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
-import local.governance.authentication.session.SessionService;
 import local.governance.gateway.GatewayCredentialService;
 import local.governance.gateway.GatewayCredentialService.Issued;
 import local.governance.gateway.api.GatewaySetupFactory;
@@ -18,7 +16,8 @@ import local.governance.group.GroupService.IssuedInvite;
 import local.governance.provider.ProviderCredentialService;
 import local.governance.provider.ProviderCredentialService.Summary;
 import local.governance.provider.ProviderKind;
-import local.governance.security.AccountContextService;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,22 +34,19 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/account/groups")
 public class GroupController {
 
-    private final AccountContextService users;
-    private final SessionService sessions;
+    private final AppUserService users;
     private final GroupService groups;
     private final GatewayCredentialService gatewayKeys;
     private final ProviderCredentialService providers;
     private final GatewaySetupFactory setupFactory;
 
     public GroupController(
-            AccountContextService users,
-            SessionService sessions,
+            AppUserService users,
             GroupService groups,
             GatewayCredentialService gatewayKeys,
             ProviderCredentialService providers,
             GatewaySetupFactory setupFactory) {
         this.users = users;
-        this.sessions = sessions;
         this.groups = groups;
         this.gatewayKeys = gatewayKeys;
         this.providers = providers;
@@ -59,30 +55,28 @@ public class GroupController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public GroupSummary create(
-            @RequestBody(required = false) CreateGroupRequest body,
-            HttpServletRequest request) {
-        AccountRow user = recent(request);
+    public GroupSummary create(@RequestBody(required = false) CreateGroupRequest body) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         return groups.create(user.id(), body == null ? null : body.name());
     }
 
     @GetMapping
-    public List<GroupSummary> list(HttpServletRequest request) {
-        AccountRow user = users.requireCurrentUser(request);
+    public List<GroupSummary> list() {
+        AppUser user = users.requireCurrentUser();
         return groups.list(user.id());
     }
 
     @GetMapping("/{groupId}")
-    public GroupDetail detail(@PathVariable UUID groupId, HttpServletRequest request) {
-        AccountRow user = users.requireCurrentUser(request);
+    public GroupDetail detail(@PathVariable UUID groupId) {
+        AppUser user = users.requireCurrentUser();
         return groups.detail(user.id(), groupId);
     }
 
     @PostMapping("/join")
-    public GroupSummary join(
-            @RequestBody(required = false) JoinRequest body,
-            HttpServletRequest request) {
-        AccountRow user = recent(request);
+    public GroupSummary join(@RequestBody(required = false) JoinRequest body) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         return groups.join(user.id(), body == null ? null : body.code());
     }
 
@@ -91,9 +85,9 @@ public class GroupController {
     public IssuedInvite invite(
             @PathVariable UUID groupId,
             @RequestBody(required = false) InviteRequest body,
-            HttpServletRequest request,
             HttpServletResponse response) {
-        AccountRow user = recent(request);
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         return groups.createInvite(
                 user.id(),
@@ -104,21 +98,17 @@ public class GroupController {
 
     @DeleteMapping("/{groupId}/invites/{inviteId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void revokeInvite(
-            @PathVariable UUID groupId,
-            @PathVariable UUID inviteId,
-            HttpServletRequest request) {
-        AccountRow user = recent(request);
+    public void revokeInvite(@PathVariable UUID groupId, @PathVariable UUID inviteId) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         groups.revokeInvite(user.id(), groupId, inviteId);
     }
 
     @DeleteMapping("/{groupId}/members/{userId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void removeMember(
-            @PathVariable UUID groupId,
-            @PathVariable UUID userId,
-            HttpServletRequest request) {
-        AccountRow user = recent(request);
+    public void removeMember(@PathVariable UUID groupId, @PathVariable UUID userId) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         groups.removeMember(user.id(), groupId, userId);
     }
 
@@ -129,7 +119,8 @@ public class GroupController {
             @RequestBody(required = false) KeyRequest body,
             HttpServletRequest request,
             HttpServletResponse response) {
-        AccountRow user = recent(request);
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         String name = body == null || body.name() == null || body.name().isBlank() ? "agent" : body.name();
         Issued issued = gatewayKeys.issue(user.id(), groupId, name);
@@ -137,8 +128,8 @@ public class GroupController {
     }
 
     @GetMapping("/{groupId}/provider-credentials")
-    public List<Summary> listProviders(@PathVariable UUID groupId, HttpServletRequest request) {
-        AccountRow user = users.requireCurrentUser(request);
+    public List<Summary> listProviders(@PathVariable UUID groupId) {
+        AppUser user = users.requireCurrentUser();
         groups.requireOwner(groupId, user.id());
         return providers.listForGroup(groupId);
     }
@@ -148,32 +139,23 @@ public class GroupController {
             @PathVariable UUID groupId,
             @PathVariable String provider,
             @RequestBody(required = false) ProviderRequest body,
-            HttpServletRequest request,
             HttpServletResponse response) {
-        AccountRow user = recent(request);
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         groups.requireOwner(groupId, user.id());
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-        ProviderRequest save = body == null ? new ProviderRequest(null, null, null) : body;
+        ProviderRequest request = body == null ? new ProviderRequest(null, null, null) : body;
         return providers.saveForGroup(
-                groupId, kind(provider), save.accessKey(), save.secretKey(), save.name());
+                groupId, kind(provider), request.accessKey(), request.secretKey(), request.name());
     }
 
     @DeleteMapping("/{groupId}/provider-credentials/{provider}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteProvider(
-            @PathVariable UUID groupId,
-            @PathVariable String provider,
-            HttpServletRequest request) {
-        AccountRow user = recent(request);
+    public void deleteProvider(@PathVariable UUID groupId, @PathVariable String provider) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         groups.requireOwner(groupId, user.id());
         providers.deleteForGroup(groupId, kind(provider));
-    }
-
-    private AccountRow recent(HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        sessions.requireCsrfIfBrowser(request);
-        sessions.requireRecentAuth(current);
-        return users.requireActive(current.accountId());
     }
 
     private static ProviderKind kind(String value) {

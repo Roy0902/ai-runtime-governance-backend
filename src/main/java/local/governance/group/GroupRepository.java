@@ -124,11 +124,11 @@ public class GroupRepository {
 
     public List<MemberRow> members(UUID groupId) {
         return jdbc.sql("""
-                SELECT a.id AS user_id, a.email, NULL::text AS display_name, m.role, m.joined_at
+                SELECT u.id AS user_id, u.email, u.display_name, m.role, m.joined_at
                 FROM group_member m
-                JOIN account a ON a.id = m.user_id
+                JOIN app_user u ON u.id = m.user_id
                 WHERE m.group_id = :group
-                ORDER BY m.joined_at, a.email
+                ORDER BY m.joined_at, u.email
                 """)
                 .param("group", groupId)
                 .query(GroupRepository::mapMember)

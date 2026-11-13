@@ -46,11 +46,11 @@ public class ProviderCredentialRepository {
 
     public void upsert(Row row) {
         String conflict = row.groupId() == null
-                ? "ON CONFLICT (account_id, provider) DO UPDATE SET"
+                ? "ON CONFLICT (app_user_id, provider) DO UPDATE SET"
                 : "ON CONFLICT (group_id, provider) WHERE group_id IS NOT NULL DO UPDATE SET";
         jdbc.sql("""
                 INSERT INTO provider_credential (
-                    id, account_id, group_id, provider, name, access_key, secret_hint,
+                    id, app_user_id, group_id, provider, name, access_key, secret_hint,
                     secret_nonce, secret_ciphertext, wrapped_key, key_id,
                     created_at, updated_at, version)
                 VALUES (
@@ -87,7 +87,7 @@ public class ProviderCredentialRepository {
     public List<Row> forAccount(UUID accountId) {
         return jdbc.sql("""
                 SELECT * FROM provider_credential
-                WHERE account_id = :account
+                WHERE app_user_id = :account
                 ORDER BY provider
                 """)
                 .param("account", accountId)
@@ -98,7 +98,7 @@ public class ProviderCredentialRepository {
     public Optional<Row> find(UUID accountId, String provider) {
         return jdbc.sql("""
                 SELECT * FROM provider_credential
-                WHERE account_id = :account AND provider = :provider
+                WHERE app_user_id = :account AND provider = :provider
                 """)
                 .param("account", accountId)
                 .param("provider", provider)
@@ -141,7 +141,7 @@ public class ProviderCredentialRepository {
     public int delete(UUID accountId, String provider) {
         return jdbc.sql("""
                 DELETE FROM provider_credential
-                WHERE account_id = :account AND provider = :provider
+                WHERE app_user_id = :account AND provider = :provider
                 """)
                 .param("account", accountId)
                 .param("provider", provider)
@@ -155,7 +155,7 @@ public class ProviderCredentialRepository {
     private static Row map(ResultSet rs, int rowNum) throws SQLException {
         return new Row(
                 rs.getObject("id", UUID.class),
-                rs.getObject("account_id", UUID.class),
+                rs.getObject("app_user_id", UUID.class),
                 rs.getString("provider"),
                 rs.getString("name"),
                 rs.getString("access_key"),

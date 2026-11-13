@@ -5,11 +5,11 @@ import java.util.List;
 import java.util.UUID;
 import local.governance.api.APIException;
 import local.governance.authentication.crypto.SecureTokenService;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
 import local.governance.config.GovernanceProperties;
 import local.governance.gateway.GatewayCredentialRepository.Row;
 import local.governance.group.GroupRepository;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,7 +49,7 @@ public class GatewayCredentialService {
     }
 
     private final GatewayCredentialRepository credentials;
-    private final AuthenticationRepository accounts;
+    private final AppUserService users;
     private final SecureTokenService tokens;
     private final GovernanceProperties properties;
     private final GroupRepository groups;
@@ -57,22 +57,22 @@ public class GatewayCredentialService {
 
     public GatewayCredentialService(
             GatewayCredentialRepository credentials,
-            AuthenticationRepository accounts,
+            AppUserService users,
             SecureTokenService tokens,
             GovernanceProperties properties,
             GroupRepository groups,
             Clock clock) {
         this.credentials = credentials;
-        this.accounts = accounts;
+        this.users = users;
         this.tokens = tokens;
         this.properties = properties;
         this.groups = groups;
         this.clock = clock;
     }
 
-    public List<Summary> list(UUID accountId) {
-        requireEnrolledAccount(accountId);
-        return credentials.forAccount(accountId).stream()
+    public List<Summary> list(UUID appUserId) {
+        users.requireActive(appUserId);
+        return credentials.forAccount(appUserId).stream()
                 .map(row -> new Summary(
                         row.id(),
                         row.name(),
@@ -85,29 +85,29 @@ public class GatewayCredentialService {
     }
 
     @Transactional
-    public Issued issue(UUID accountId, String name) {
-        return issue(accountId, null, name);
+    public Issued issue(UUID appUserId, String name) {
+        return issue(appUserId, null, name);
     }
 
     @Transactional
-    public Issued issue(UUID accountId, UUID groupId, String name) {
-        AccountRow account;
+    public Issued issue(UUID appUserId, UUID groupId, String name) {
+        AppUser user;
         if (groupId == null) {
-            account = requireGatewayAccount(accountId);
+            user = users.requireGatewayEntitled(appUserId);
         } else {
-            account = requireEnrolledAccount(accountId);
-            if (!groups.isMember(groupId, accountId)) {
+            user = users.requireActive(appUserId);
+            if (!groups.isMember(groupId, appUserId)) {
                 throw new APIException("GROUP_ACCESS_DENIED", "You are not a member of this group.");
             }
-            if (account.scopeId() == null) {
+            if (user.scopeId() == null) {
                 throw new APIException("GATEWAY_NOT_ENTITLED", "This account has no private scope.");
             }
         }
         String normalized = normalizeName(name);
-        if (credentials.activeByName(accountId, normalized).isPresent()) {
+        if (credentials.activeByName(appUserId, normalized).isPresent()) {
             throw new APIException("GATEWAY_KEY_EXISTS", "Revoke the existing key with that name first.");
         }
-        if (credentials.activeCount(accountId) >= properties.getGateway().getMaxActiveKeys()) {
+        if (credentials.activeCount(appUserId) >= properties.getGateway().getMaxActiveKeys()) {
             throw new APIException("GATEWAY_KEY_LIMIT", "Revoke an existing key before creating another.");
         }
 
@@ -117,8 +117,8 @@ public class GatewayCredentialService {
         int prefixLength = Math.min(token.length(), TOKEN_PREFIX.length() + 6);
         credentials.insert(new Row(
                 id,
-                account.id(),
-                account.scopeId(),
+                user.id(),
+                user.scopeId(),
                 normalized,
                 tokens.hash(token),
                 token.substring(0, prefixLength),
@@ -130,9 +130,9 @@ public class GatewayCredentialService {
     }
 
     @Transactional
-    public void revoke(UUID accountId, UUID credentialId) {
-        requireEnrolledAccount(accountId);
-        if (credentials.revoke(accountId, credentialId, clock.instant()) == 0) {
+    public void revoke(UUID appUserId, UUID credentialId) {
+        users.requireActive(appUserId);
+        if (credentials.revoke(appUserId, credentialId, clock.instant()) == 0) {
             throw APIException.notFound();
         }
     }
@@ -144,17 +144,17 @@ public class GatewayCredentialService {
         }
         Row credential = credentials.activeByHash(tokens.hash(token))
                 .orElseThrow(GatewayCredentialService::invalidCredential);
-        AccountRow account = accounts.accountById(credential.accountId())
-                .filter(GatewayCredentialService::enrolled)
+        AppUser user = users.findById(credential.accountId())
+                .filter(row -> "ACTIVE".equals(row.status()))
                 .filter(row -> credential.scopeId().equals(row.scopeId()))
                 .orElseThrow(GatewayCredentialService::invalidCredential);
         if (credential.groupId() == null) {
-            if (!"GRANTED".equals(account.gatewayEntitlement())) {
+            if (!"GRANTED".equals(user.gatewayEntitlement())) {
                 throw new APIException(
                         "GATEWAY_NOT_ENTITLED",
                         "This account is not permitted to use the model gateway.");
             }
-        } else if (!groups.isMember(credential.groupId(), account.id())) {
+        } else if (!groups.isMember(credential.groupId(), user.id())) {
             throw new APIException("GROUP_ACCESS_DENIED", "You are not a member of this group.");
         }
         credentials.markUsed(credential.id(), clock.instant());
@@ -163,35 +163,12 @@ public class GatewayCredentialService {
                 : groups.findGroup(credential.groupId()).map(row -> row.name()).orElse(null);
         return new Principal(
                 credential.id(),
-                account.id(),
-                account.scopeId(),
+                user.id(),
+                user.scopeId(),
                 credential.groupId(),
-                account.email(),
-                null,
+                user.email(),
+                user.displayName(),
                 groupName);
-    }
-
-    private AccountRow requireEnrolledAccount(UUID accountId) {
-        return accounts.accountById(accountId)
-                .filter(GatewayCredentialService::enrolled)
-                .orElseThrow(APIException::signInRequired);
-    }
-
-    private AccountRow requireGatewayAccount(UUID accountId) {
-        AccountRow account = requireEnrolledAccount(accountId);
-        if (!"GRANTED".equals(account.gatewayEntitlement())) {
-            throw new APIException(
-                    "GATEWAY_NOT_ENTITLED",
-                    "Model-gateway permission must be granted before a key can be created.");
-        }
-        return account;
-    }
-
-    private static boolean enrolled(AccountRow account) {
-        return "VERIFIED".equals(account.status())
-                && account.emailVerifiedAt() != null
-                && "ENROLLED".equals(account.mfaState())
-                && account.scopeId() != null;
     }
 
     private static String normalizeName(String name) {

@@ -10,7 +10,7 @@ import local.governance.authentication.crypto.SecureTokenService;
 import local.governance.group.GroupRepository.GroupRow;
 import local.governance.group.GroupRepository.InviteRow;
 import local.governance.group.GroupRepository.MemberRow;
-import local.governance.security.AccountContextService;
+import local.governance.security.AppUserService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,14 +56,14 @@ public class GroupService {
     public record IssuedInvite(UUID id, String token, String tokenPrefix, Instant expiresAt, int maxUses) {}
 
     private final GroupRepository groups;
-    private final AccountContextService users;
+    private final AppUserService users;
     private final SecureTokenService tokens;
     private final local.governance.gateway.GatewayCredentialRepository credentials;
     private final Clock clock;
 
     public GroupService(
             GroupRepository groups,
-            AccountContextService users,
+            AppUserService users,
             SecureTokenService tokens,
             local.governance.gateway.GatewayCredentialRepository credentials,
             Clock clock) {

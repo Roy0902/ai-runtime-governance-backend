@@ -17,11 +17,11 @@ import java.util.Optional;
 import java.util.UUID;
 import local.governance.api.APIException;
 import local.governance.authentication.crypto.SecureTokenService;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
 import local.governance.gateway.GatewayCredentialRepository;
 import local.governance.group.GroupRepository.GroupRow;
 import local.governance.group.GroupRepository.InviteRow;
-import local.governance.security.AccountContextService;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -31,7 +31,7 @@ class GroupServiceTest {
     private static final Instant NOW = Instant.parse("2026-11-09T12:00:00Z");
 
     private GroupRepository groups;
-    private AccountContextService users;
+    private AppUserService users;
     private GatewayCredentialRepository credentials;
     private SecureTokenService tokens;
     private GroupService service;
@@ -43,7 +43,7 @@ class GroupServiceTest {
     @BeforeEach
     void setUp() {
         groups = mock(GroupRepository.class);
-        users = mock(AccountContextService.class);
+        users = mock(AppUserService.class);
         credentials = mock(GatewayCredentialRepository.class);
         tokens = new SecureTokenService();
         service = new GroupService(groups, users, tokens, credentials, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -147,20 +147,9 @@ class GroupServiceTest {
         verify(credentials, never()).revokeForGroupMember(any(), any(), any());
     }
 
-    private AccountRow user(UUID id) {
-        return new AccountRow(
-                id,
-                "user@example.test",
-                "hash",
-                NOW,
-                "VERIFIED",
-                "ENROLLED",
-                UUID.randomUUID(),
-                "GRANTED",
-                NOW,
-                NOW,
-                null,
-                null,
-                0);
+    private AppUser user(UUID id) {
+        return new AppUser(
+                id, null, "user@example.test", "User", "ACTIVE", "GRANTED",
+                UUID.randomUUID(), NOW, NOW, null, 0);
     }
 }

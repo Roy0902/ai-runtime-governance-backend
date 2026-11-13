@@ -1,15 +1,13 @@
 package local.governance.provider.api;
 
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
+import jakarta.servlet.http.HttpServletResponse;
 import local.governance.api.APIException;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
-import local.governance.authentication.session.SessionService;
 import local.governance.provider.ProviderCredentialService;
 import local.governance.provider.ProviderCredentialService.Summary;
 import local.governance.provider.ProviderKind;
-import local.governance.security.AccountContextService;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -31,22 +29,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/account/provider-credentials")
 public class ProviderCredentialController {
 
-    private final AccountContextService users;
-    private final SessionService sessions;
+    private final AppUserService users;
     private final ProviderCredentialService credentials;
 
-    public ProviderCredentialController(
-            AccountContextService users,
-            SessionService sessions,
-            ProviderCredentialService credentials) {
+    public ProviderCredentialController(AppUserService users, ProviderCredentialService credentials) {
         this.users = users;
-        this.sessions = sessions;
         this.credentials = credentials;
     }
 
     @GetMapping
-    public List<Summary> list(HttpServletRequest request) {
-        AccountRow user = users.requireCurrentUser(request);
+    public List<Summary> list() {
+        AppUser user = users.requireCurrentUser();
         return credentials.list(user.id());
     }
 
@@ -54,25 +47,20 @@ public class ProviderCredentialController {
     public Summary save(
             @PathVariable String provider,
             @RequestBody(required = false) SaveRequest body,
-            HttpServletRequest request,
             HttpServletResponse response) {
-        SessionService.Current current = sessions.requireHuman(request);
-        sessions.requireCsrfIfBrowser(request);
-        sessions.requireRecentAuth(current);
-        AccountRow user = users.requireActive(current.accountId());
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-        SaveRequest save = body == null ? new SaveRequest(null, null, null) : body;
+        SaveRequest request = body == null ? new SaveRequest(null, null, null) : body;
         return credentials.save(
-                user.id(), kind(provider), save.accessKey(), save.secretKey(), save.name());
+                user.id(), kind(provider), request.accessKey(), request.secretKey(), request.name());
     }
 
     @DeleteMapping("/{provider}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable String provider, HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        sessions.requireCsrfIfBrowser(request);
-        sessions.requireRecentAuth(current);
-        AccountRow user = users.requireActive(current.accountId());
+    public void delete(@PathVariable String provider) {
+        users.requireRecentAuth();
+        AppUser user = users.requireCurrentUser();
         credentials.delete(user.id(), kind(provider));
     }
 

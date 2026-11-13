@@ -1,5 +1,6 @@
 package local.governance.gateway;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -50,7 +51,8 @@ public class GatewayService {
             byte[] body,
             boolean stream,
             String prompt,
-            String guardOutcome) {}
+            String guardOutcome,
+            UUID promptEventId) {}
 
     private final GovernanceProperties properties;
     private final GatewayRequestParser parser;
@@ -65,6 +67,7 @@ public class GatewayService {
     private final GatewayOutputPersistence outputPersistence;
     private final GatewayRateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
+    private final ContentSanitizer sanitizer;
     private final Optional<GatewayObservationExporter> observationExporter;
 
     public GatewayService(
@@ -95,6 +98,7 @@ public class GatewayService {
         this.outputPersistence = outputPersistence;
         this.rateLimiter = rateLimiter;
         this.objectMapper = objectMapper;
+        this.sanitizer = new ContentSanitizer(objectMapper);
         this.observationExporter = observationExporter;
     }
 
@@ -239,7 +243,8 @@ public class GatewayService {
             String clientUserAgent,
             String sessionId) {
         GatewayGuardrail.Decision decision = guardrail.evaluate(parsed.userText());
-        UUID traceId = Uuid7.generate();
+        UUID traceId = traces.resolveTraceId(principal.scopeId(), sessionId);
+        String promptContent = promptContent(parsed.userText());
 
         if (decision.failed()) {
             traces.blocked(
@@ -250,7 +255,9 @@ public class GatewayService {
                     GatewayGuardrail.POLICY_ID,
                     GatewayGuardrail.POLICY_VERSION,
                     List.of(),
-                    true);
+                    true,
+                    promptContent,
+                    sessionId);
             throw new APIException(
                     "GUARD_EVALUATION_FAILED",
                     "The prompt guard could not evaluate this message, so it was not forwarded.");
@@ -264,7 +271,9 @@ public class GatewayService {
                     GatewayGuardrail.POLICY_ID,
                     GatewayGuardrail.POLICY_VERSION,
                     decision.ruleIds(),
-                    false);
+                    false,
+                    promptContent,
+                    sessionId);
             throw new APIException("GUARD_DENIED", "The governance guard denied this prompt.");
         }
         if (decision.outcome() == GuardOutcome.REQUIRE_APPROVAL) {
@@ -276,7 +285,9 @@ public class GatewayService {
                     GatewayGuardrail.POLICY_ID,
                     GatewayGuardrail.POLICY_VERSION,
                     decision.ruleIds(),
-                    false);
+                    false,
+                    promptContent,
+                    sessionId);
             throw new APIException(
                     "GUARD_APPROVAL_REQUIRED",
                     "This prompt requires the submitter's approval before it can be forwarded.");
@@ -286,8 +297,11 @@ public class GatewayService {
                 parsed,
                 rewrite(parsed.body(), parsed.userMessageIndex(), decision.message(), rawBody));
         String conversationKey = conversations.key(
-                principal.scopeId(), parsed.model(), parsed.canonicalPrefix(), clientConversationId);
-        turnRecorder.recordGuardedTurn(
+                principal.scopeId(),
+                parsed.model(),
+                parsed.canonicalPrefix(),
+                sessionId != null ? sessionId : clientConversationId);
+        UUID promptEventId = turnRecorder.recordGuardedTurn(
                 principal.scopeId(),
                 traceId,
                 parsed.model(),
@@ -296,7 +310,9 @@ public class GatewayService {
                 GatewayGuardrail.POLICY_VERSION,
                 decision.ruleIds(),
                 conversationKey,
-                conversations.messageHash(parsed.userText()));
+                conversations.messageHash(parsed.userText()),
+                promptContent,
+                sessionId);
         return new Prepared(
                 traceId,
                 principal.scopeId(),
@@ -314,7 +330,8 @@ public class GatewayService {
                 forwardBody,
                 parsed.stream(),
                 decision.outcome() == GuardOutcome.REDACT ? decision.message() : parsed.userText(),
-                decision.outcome().name().toLowerCase(java.util.Locale.ROOT));
+                decision.outcome().name().toLowerCase(java.util.Locale.ROOT),
+                promptEventId);
     }
 
     private Prepared prepareContinuation(
@@ -325,12 +342,21 @@ public class GatewayService {
             String clientUserAgent,
             String sessionId) {
         String conversationKey = conversations.key(
-                principal.scopeId(), parsed.model(), parsed.canonicalPrefix(), clientConversationId);
+                principal.scopeId(),
+                parsed.model(),
+                parsed.canonicalPrefix(),
+                sessionId != null ? sessionId : clientConversationId);
         Optional<Row> found = conversations.find(principal.scopeId(), conversationKey);
         if (found.isEmpty()) {
             if (properties.getGateway().isAllowUnguardedContinuation()) {
-                UUID traceId = Uuid7.generate();
-                turnRecorder.recordBypassedTurn(principal.scopeId(), traceId, parsed.model());
+                UUID traceId = traces.resolveTraceId(principal.scopeId(), sessionId);
+                UUID promptEventId =
+                        turnRecorder.recordBypassedTurn(
+                                principal.scopeId(),
+                                traceId,
+                                parsed.model(),
+                                promptContent(parsed.userText()),
+                                sessionId);
                 return new Prepared(
                         traceId,
                         principal.scopeId(),
@@ -348,7 +374,8 @@ public class GatewayService {
                         rawBody,
                         parsed.stream(),
                         null,
-                        null);
+                        null,
+                        promptEventId);
             }
             throw new APIException(
                     "GUARD_CONTEXT_UNKNOWN",
@@ -381,19 +408,23 @@ public class GatewayService {
                 forwardBody,
                 parsed.stream(),
                 null,
-                conversation.guardOutcome());
+                conversation.guardOutcome(),
+                null);
     }
 
     /**
-     * Builds the Langfuse session id from a client-supplied conversation or
-     * agent session header. The scope is prefixed so two accounts cannot merge
-     * their sessions, and unusable values fall back to the next candidate
-     * instead of failing the model request.
+     * Builds the session id used for local trace and Langfuse grouping from a
+     * client-supplied agent session or conversation header. The scope is
+     * prefixed so two accounts cannot merge their sessions, and unusable values
+     * fall back to the next candidate instead of failing the model request.
      */
     private static String sessionId(UUID scopeId, String clientConversationId, String agentSessionId) {
-        String value = validSessionId(clientConversationId);
+        // The agent session header identifies the real client session. The
+        // conversation header is only a fallback because setup presets may use
+        // a fixed value that would collapse every session into one.
+        String value = validSessionId(agentSessionId);
         if (value == null) {
-            value = validSessionId(agentSessionId);
+            value = validSessionId(clientConversationId);
         }
         return value == null ? null : scopeId + ":" + value;
     }
@@ -534,7 +565,10 @@ public class GatewayService {
                         finalStatus,
                         result.finishReason(),
                         recordedDurationMs,
-                        eventId);
+                        eventId,
+                        prepared.promptEventId(),
+                        modelContent(result),
+                        result.toolCalls());
             } catch (RuntimeException exception) {
                 log.warn("gateway trace completion could not be recorded", exception);
             }
@@ -545,6 +579,39 @@ public class GatewayService {
                 log.warn("gateway model usage could not be recorded", exception);
             }
         });
+    }
+
+    private String promptContent(String text) {
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("text", text);
+        try {
+            return sanitizer.clean(objectMapper.writeValueAsString(content));
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
+    }
+
+    private String modelContent(GatewayResponseCapture.Capture result) {
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("output", result.output());
+        content.put("reasoning", result.reasoning());
+        content.put("finishReasons", result.finishReasons());
+        if (!result.toolCalls().isEmpty()) {
+            content.put("toolCalls", result.toolCalls().stream()
+                    .map((call) -> {
+                        Map<String, Object> value = new LinkedHashMap<>();
+                        value.put("id", call.id());
+                        value.put("name", call.name());
+                        value.put("arguments", call.arguments());
+                        return value;
+                    })
+                    .toList());
+        }
+        try {
+            return sanitizer.clean(objectMapper.writeValueAsString(content));
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
     }
 
     private String export(

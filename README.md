@@ -333,11 +333,14 @@ Langfuse itself:
 - `langfuse.user.id` is the account email (falling back to the account UUID),
   and `langfuse.trace.metadata.account_id`, `user_email`, and `user_name` carry
   the stable id and the current profile values.
-- `langfuse.session.id` is `<scope-id>:<conversation-id>`, taken from the
-  `X-Governance-Conversation-Id` header, or from the agent's
-  `x-opencode-session` header when the conversation header is absent. The scope
-  prefix prevents two accounts from merging sessions; values that are too long
-  or contain unexpected characters are ignored rather than rejected.
+- `langfuse.session.id` is `<scope-id>:<session-id>`, taken from the agent's
+  `x-opencode-session` header, or from a client-supplied
+  `X-Governance-Conversation-Id` header when the agent session is absent. The
+  scope prefix prevents two accounts from merging sessions; values that are too
+  long or contain unexpected characters are ignored rather than rejected. The
+  local timeline stores the same session id on the trace, so every prompt in one
+  agent session is grouped under one session instead of appearing as a separate
+  trace.
 - Group keys add `langfuse.trace.metadata.group_id` / `group_name` and a
   `group:<slug>` tag. Langfuse has no native group dimension, so tags and
   metadata are the supported way to filter by group.
@@ -462,7 +465,8 @@ supports `stream_options`.
 - Approval is fail-closed, not interactive.
 - The conversation fingerprint is a pragmatic correlation key, not a per-turn
   client contract. Concurrent identical conversations can collide; sending a
-  stable `X-Governance-Conversation-Id` header avoids this.
+  stable `x-opencode-session` or `X-Governance-Conversation-Id` header avoids
+  this.
 - The local timeline records the guard decision and model metadata, not prompt or
   output bodies. Those exist only in memory and, when enabled, in Langfuse.
 - The built-in catalog currently has no production `DENY` rule; the deny path is

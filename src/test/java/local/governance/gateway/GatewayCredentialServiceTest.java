@@ -2,7 +2,6 @@ package local.governance.gateway;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -19,11 +18,10 @@ import java.util.Optional;
 import java.util.UUID;
 import local.governance.api.APIException;
 import local.governance.authentication.crypto.SecureTokenService;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
 import local.governance.config.GovernanceProperties;
 import local.governance.gateway.GatewayCredentialRepository.Row;
-import local.governance.group.GroupRepository;
+import local.governance.security.AppUserService;
+import local.governance.security.AppUserService.AppUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -35,22 +33,24 @@ class GatewayCredentialServiceTest {
     private final UUID accountId = UUID.randomUUID();
     private final UUID scopeId = UUID.randomUUID();
     private GatewayCredentialRepository credentials;
-    private AuthenticationRepository accounts;
-    private GroupRepository groups;
+    private AppUserService users;
     private SecureTokenService tokens;
     private GovernanceProperties properties;
+    private local.governance.group.GroupRepository groups;
     private GatewayCredentialService service;
 
     @BeforeEach
     void setUp() {
         credentials = mock(GatewayCredentialRepository.class);
-        accounts = mock(AuthenticationRepository.class);
-        groups = mock(GroupRepository.class);
+        users = mock(AppUserService.class);
         tokens = new SecureTokenService();
         properties = new GovernanceProperties();
+        groups = mock(local.governance.group.GroupRepository.class);
         service = new GatewayCredentialService(
-                credentials, accounts, tokens, properties, groups, Clock.fixed(NOW, ZoneOffset.UTC));
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("GRANTED")));
+                credentials, users, tokens, properties, groups, Clock.fixed(NOW, ZoneOffset.UTC));
+        when(users.requireActive(accountId)).thenReturn(account("ACTIVE", "GRANTED"));
+        when(users.requireGatewayEntitled(accountId)).thenReturn(account("ACTIVE", "GRANTED"));
+        when(users.findById(accountId)).thenReturn(Optional.of(account("ACTIVE", "GRANTED")));
     }
 
     @Test
@@ -66,41 +66,9 @@ class GatewayCredentialServiceTest {
         assertEquals("laptop", issued.name());
         assertEquals(accountId, row.getValue().accountId());
         assertEquals(scopeId, row.getValue().scopeId());
-        assertNull(row.getValue().groupId());
         assertArrayEquals(tokens.hash(issued.token()), row.getValue().tokenHash());
         assertTrue(issued.token().startsWith(row.getValue().tokenPrefix()));
         assertEquals(13, row.getValue().tokenPrefix().length());
-    }
-
-    @Test
-    void issuesAGroupKeyForAMemberWithoutPersonalEntitlement() {
-        UUID groupId = UUID.randomUUID();
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("REVOKED")));
-        when(groups.isMember(groupId, accountId)).thenReturn(true);
-        when(credentials.activeByName(accountId, "agent")).thenReturn(Optional.empty());
-        when(credentials.activeCount(accountId)).thenReturn(0L);
-
-        GatewayCredentialService.Issued issued = service.issue(accountId, groupId, "agent");
-
-        ArgumentCaptor<Row> row = ArgumentCaptor.forClass(Row.class);
-        verify(credentials).insert(row.capture());
-        assertEquals(groupId, row.getValue().groupId());
-        assertEquals(accountId, row.getValue().accountId());
-        assertEquals("agent", issued.name());
-    }
-
-    @Test
-    void groupKeysRequireLiveMembership() {
-        UUID groupId = UUID.randomUUID();
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("REVOKED")));
-        when(groups.isMember(groupId, accountId)).thenReturn(false);
-
-        APIException exception = assertThrows(
-                APIException.class,
-                () -> service.issue(accountId, groupId, "agent"));
-
-        assertEquals("GROUP_ACCESS_DENIED", exception.code());
-        verify(credentials, never()).insert(any());
     }
 
     @Test
@@ -114,12 +82,12 @@ class GatewayCredentialServiceTest {
         assertEquals(1, summaries.size());
         assertEquals("laptop", summaries.getFirst().name());
         assertEquals("arg_gw_abcdef", summaries.getFirst().tokenPrefix());
-        assertNull(summaries.getFirst().groupId());
     }
 
     @Test
     void refusesIssueWithoutGatewayEntitlement() {
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("REVOKED")));
+        when(users.requireGatewayEntitled(accountId))
+                .thenThrow(new APIException("GATEWAY_NOT_ENTITLED", "not entitled"));
 
         APIException exception = assertThrows(
                 APIException.class,
@@ -177,41 +145,7 @@ class GatewayCredentialServiceTest {
 
         assertEquals(accountId, principal.accountId());
         assertEquals(scopeId, principal.scopeId());
-        assertNull(principal.groupId());
         verify(credentials).markUsed(row.id(), NOW);
-    }
-
-    @Test
-    void authenticatesAGroupKeyWhenTheMemberIsStillInTheGroup() {
-        UUID groupId = UUID.randomUUID();
-        String token = "arg_gw_secret";
-        Row row = new Row(UUID.randomUUID(), accountId, scopeId, "agent",
-                tokens.hash(token), "arg_gw_secret", NOW, null, null, groupId);
-        when(credentials.activeByHash(tokens.hash(token))).thenReturn(Optional.of(row));
-        when(groups.isMember(groupId, accountId)).thenReturn(true);
-
-        GatewayCredentialService.Principal principal = service.authenticate(token);
-
-        assertEquals(accountId, principal.accountId());
-        assertEquals(groupId, principal.groupId());
-        verify(credentials).markUsed(row.id(), NOW);
-    }
-
-    @Test
-    void rejectsAGroupKeyAfterTheMemberWasRemoved() {
-        UUID groupId = UUID.randomUUID();
-        String token = "arg_gw_secret";
-        Row row = new Row(UUID.randomUUID(), accountId, scopeId, "agent",
-                tokens.hash(token), "arg_gw_secret", NOW, null, null, groupId);
-        when(credentials.activeByHash(tokens.hash(token))).thenReturn(Optional.of(row));
-        when(groups.isMember(groupId, accountId)).thenReturn(false);
-
-        APIException exception = assertThrows(
-                APIException.class,
-                () -> service.authenticate(token));
-
-        assertEquals("GROUP_ACCESS_DENIED", exception.code());
-        verify(credentials, never()).markUsed(any(), any());
     }
 
     @Test
@@ -231,7 +165,7 @@ class GatewayCredentialServiceTest {
         Row row = new Row(UUID.randomUUID(), accountId, scopeId, "laptop",
                 tokens.hash(token), "arg_gw_secret", NOW, null, null, null);
         when(credentials.activeByHash(tokens.hash(token))).thenReturn(Optional.of(row));
-        when(accounts.accountById(accountId)).thenReturn(Optional.of(account("REVOKED")));
+        when(users.findById(accountId)).thenReturn(Optional.of(account("ACTIVE", "REVOKED")));
 
         APIException exception = assertThrows(
                 APIException.class,
@@ -252,19 +186,17 @@ class GatewayCredentialServiceTest {
         assertEquals("NOT_FOUND", exception.code());
     }
 
-    private AccountRow account(String entitlement) {
-        return new AccountRow(
+    private AppUser account(String status, String entitlement) {
+        return new AppUser(
                 accountId,
+                "keycloak-subject",
                 "person@example.test",
-                "hash",
-                NOW,
-                "VERIFIED",
-                "ENROLLED",
-                scopeId,
+                "Person",
+                status,
                 entitlement,
+                scopeId,
                 NOW,
                 NOW,
-                null,
                 null,
                 0);
     }

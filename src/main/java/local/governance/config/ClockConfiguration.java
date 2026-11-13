@@ -8,7 +8,10 @@ import org.springframework.context.annotation.Configuration;
 public class ClockConfiguration {
 
     @Bean
-    public Clock clock() {
-        return MutableClock.utc();
+    public Clock clock(GovernanceProperties properties) {
+        if (properties.getTestControl().isEnabled()) {
+            return MutableClock.utc();
+        }
+        return Clock.systemUTC();
     }
 }

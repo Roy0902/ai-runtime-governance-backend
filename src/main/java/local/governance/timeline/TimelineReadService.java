@@ -1,5 +1,6 @@
 package local.governance.timeline;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.time.Duration;
@@ -21,11 +22,9 @@ import local.governance.api.ModelUsageSummaryResponse;
 import local.governance.api.TraceDetailResponse;
 import local.governance.api.TracePageResponse;
 import local.governance.api.TraceSummaryResponse;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
-import local.governance.authentication.session.SessionService;
 import local.governance.config.GovernanceProperties;
 import local.governance.config.TestFaultRegistry;
+import local.governance.security.AppUserService;
 import local.governance.timeline.TimelineRepository.EventRow;
 import local.governance.timeline.TimelineRepository.TraceRow;
 import local.governance.timeline.TimelineRepository.TraversalRow;
@@ -37,29 +36,29 @@ public class TimelineReadService {
     public static final int TRACE_PAGE_SIZE = 50;
     public static final int EVENT_PAGE_SIZE = 200;
 
-    private final SessionService sessions;
-    private final AuthenticationRepository accounts;
+    private final AppUserService users;
     private final TimelineRepository timeline;
     private final EventUsageLookup usage;
     private final TestFaultRegistry faults;
     private final GovernanceProperties properties;
     private final Clock clock;
+    private final ObjectMapper objectMapper;
 
     public TimelineReadService(
-            SessionService sessions,
-            AuthenticationRepository accounts,
+            AppUserService users,
             TimelineRepository timeline,
             EventUsageLookup usage,
             TestFaultRegistry faults,
             GovernanceProperties properties,
-            Clock clock) {
-        this.sessions = sessions;
-        this.accounts = accounts;
+            Clock clock,
+            ObjectMapper objectMapper) {
+        this.users = users;
         this.timeline = timeline;
         this.usage = usage;
         this.faults = faults;
         this.properties = properties;
         this.clock = clock;
+        this.objectMapper = objectMapper;
     }
 
     public TracePageResponse traces(HttpServletRequest request, String cursor) {
@@ -234,10 +233,7 @@ public class TimelineReadService {
     }
 
     private UUID scope(HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        return accounts.accountById(current.accountId())
-                .map(AccountRow::scopeId)
-                .orElseThrow(APIException::notFound);
+        return users.requireScopeId();
     }
 
     private static UUID traceId(String raw) {
@@ -255,11 +251,12 @@ public class TimelineReadService {
                 row.executionStatus(),
                 row.telemetryStatus(),
                 row.guardOutcome(),
+                row.sessionId(),
                 false);
     }
 
     private static TraceSummaryResponse tombstoneTrace(UUID traceId) {
-        return new TraceSummaryResponse(traceId, null, null, null, null, true);
+        return new TraceSummaryResponse(traceId, null, null, null, null, null, true);
     }
 
     private static TraceDetailResponse detail(TraceRow row) {
@@ -274,13 +271,14 @@ public class TimelineReadService {
                 row.telemetryStatus(),
                 row.guardOutcome(),
                 row.identity(),
+                row.sessionId(),
                 new CoverageResponse(row.inputCoverage(), row.responseCoverage(), row.toolsCoverage()),
                 hasLoss
                         ? new LossResponse(row.lossCauseCode(), row.lossMissingCount(), row.lossFrom(), row.lossTo())
                         : null);
     }
 
-    private static ActivityEventResponse event(EventRow row, ModelUsageSummaryResponse usage) {
+    private ActivityEventResponse event(EventRow row, ModelUsageSummaryResponse usage) {
         String relationship = row.parentEventId() == null
                 ? "root"
                 : row.parentExists() ? "linked" : "unresolved";
@@ -308,11 +306,23 @@ public class TimelineReadService {
                 row.identity(),
                 metadata,
                 usage,
+                content(row.content()),
                 false);
+    }
+
+    private Object content(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(value, Object.class);
+        } catch (Exception exception) {
+            return null;
+        }
     }
 
     private static ActivityEventResponse tombstoneEvent(UUID traceId, UUID eventId) {
         return new ActivityEventResponse(
-                eventId, traceId, null, null, null, null, null, null, null, null, null, true);
+                eventId, traceId, null, null, null, null, null, null, null, null, null, null, true);
     }
 }

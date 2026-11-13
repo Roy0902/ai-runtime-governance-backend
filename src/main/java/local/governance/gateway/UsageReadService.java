@@ -10,12 +10,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import local.governance.api.APIException;
-import local.governance.authentication.persistence.AuthenticationRepository;
-import local.governance.authentication.persistence.AuthenticationRepository.AccountRow;
-import local.governance.authentication.session.SessionService;
 import local.governance.gateway.api.ModelUsageResponse;
 import local.governance.gateway.api.UsageGroupResponse;
 import local.governance.gateway.api.UsageSummaryResponse;
+import local.governance.security.AppUserService;
 import local.governance.timeline.TimelineRepository;
 import org.springframework.stereotype.Service;
 
@@ -26,8 +24,7 @@ public class UsageReadService {
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
     private static final Duration MAX_RANGE = Duration.ofDays(366);
 
-    private final SessionService sessions;
-    private final AuthenticationRepository accounts;
+    private final AppUserService users;
     private final TimelineRepository timeline;
     private final ModelUsageRepository usage;
     private final LangfuseObservationClient observations;
@@ -35,15 +32,13 @@ public class UsageReadService {
     private final Clock clock;
 
     public UsageReadService(
-            SessionService sessions,
-            AuthenticationRepository accounts,
+            AppUserService users,
             TimelineRepository timeline,
             ModelUsageRepository usage,
             LangfuseObservationClient observations,
             ObjectMapper objectMapper,
             Clock clock) {
-        this.sessions = sessions;
-        this.accounts = accounts;
+        this.users = users;
         this.timeline = timeline;
         this.usage = usage;
         this.observations = observations;
@@ -176,10 +171,7 @@ public class UsageReadService {
     }
 
     private UUID scope(HttpServletRequest request) {
-        SessionService.Current current = sessions.requireHuman(request);
-        return accounts.accountById(current.accountId())
-                .map(AccountRow::scopeId)
-                .orElseThrow(APIException::notFound);
+        return users.requireScopeId();
     }
 
     private static UUID traceId(String raw) {

@@ -7,7 +7,7 @@ import java.util.UUID;
 import local.governance.api.APIException;
 import local.governance.provider.ProviderCredentialRepository.Row;
 import local.governance.provider.crypto.EnvelopeCipher;
-import local.governance.security.AccountContextService;
+import local.governance.security.AppUserService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,13 +30,13 @@ public class ProviderCredentialService {
 
     private final ProviderCredentialRepository credentials;
     private final EnvelopeCipher cipher;
-    private final AccountContextService users;
+    private final AppUserService users;
     private final Clock clock;
 
     public ProviderCredentialService(
             ProviderCredentialRepository credentials,
             EnvelopeCipher cipher,
-            AccountContextService users,
+            AppUserService users,
             Clock clock) {
         this.credentials = credentials;
         this.cipher = cipher;

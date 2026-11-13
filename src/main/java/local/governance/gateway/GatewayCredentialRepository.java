@@ -43,7 +43,7 @@ public class GatewayCredentialRepository {
     public void insert(Row row) {
         jdbc.sql("""
                 INSERT INTO gateway_credential (
-                    id, account_id, scope_id, name, token_hash, token_prefix, created_at, group_id)
+                    id, app_user_id, scope_id, name, token_hash, token_prefix, created_at, group_id)
                 VALUES (:id, :account, :scope, :name, :tokenHash, :prefix, :createdAt, :groupId)
                 """)
                 .param("id", row.id())
@@ -60,7 +60,7 @@ public class GatewayCredentialRepository {
     public List<Row> forAccount(UUID accountId) {
         return jdbc.sql("""
                 SELECT * FROM gateway_credential
-                WHERE account_id = :account
+                WHERE app_user_id = :account
                 ORDER BY created_at DESC, id DESC
                 """)
                 .param("account", accountId)
@@ -71,7 +71,7 @@ public class GatewayCredentialRepository {
     public long activeCount(UUID accountId) {
         return jdbc.sql("""
                 SELECT COUNT(*) FROM gateway_credential
-                WHERE account_id = :account AND revoked_at IS NULL
+                WHERE app_user_id = :account AND revoked_at IS NULL
                 """)
                 .param("account", accountId)
                 .query(Long.class)
@@ -81,7 +81,7 @@ public class GatewayCredentialRepository {
     public Optional<Row> activeByName(UUID accountId, String name) {
         return jdbc.sql("""
                 SELECT * FROM gateway_credential
-                WHERE account_id = :account AND lower(name) = lower(:name) AND revoked_at IS NULL
+                WHERE app_user_id = :account AND lower(name) = lower(:name) AND revoked_at IS NULL
                 """)
                 .param("account", accountId)
                 .param("name", name)
@@ -112,7 +112,7 @@ public class GatewayCredentialRepository {
     public int revoke(UUID accountId, UUID credentialId, Instant now) {
         return jdbc.sql("""
                 UPDATE gateway_credential SET revoked_at = :now
-                WHERE account_id = :account AND id = :id AND revoked_at IS NULL
+                WHERE app_user_id = :account AND id = :id AND revoked_at IS NULL
                 """)
                 .param("now", ts(now))
                 .param("account", accountId)
@@ -123,7 +123,7 @@ public class GatewayCredentialRepository {
     public int revokeForGroupMember(UUID groupId, UUID accountId, Instant now) {
         return jdbc.sql("""
                 UPDATE gateway_credential SET revoked_at = :now
-                WHERE group_id = :group AND account_id = :account AND revoked_at IS NULL
+                WHERE group_id = :group AND app_user_id = :account AND revoked_at IS NULL
                 """)
                 .param("group", groupId)
                 .param("account", accountId)
@@ -138,7 +138,7 @@ public class GatewayCredentialRepository {
     private static Row map(ResultSet rs, int rowNum) throws SQLException {
         return new Row(
                 rs.getObject("id", UUID.class),
-                rs.getObject("account_id", UUID.class),
+                rs.getObject("app_user_id", UUID.class),
                 rs.getObject("scope_id", UUID.class),
                 rs.getString("name"),
                 rs.getBytes("token_hash"),
