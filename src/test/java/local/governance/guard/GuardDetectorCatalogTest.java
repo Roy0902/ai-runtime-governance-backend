@@ -59,15 +59,26 @@ class GuardDetectorCatalogTest {
     }
 
     @Test
-    void acceptsExactlyTheUtf8MessageLimit() {
-        String message = "🙂".repeat(GuardDecisionCore.MAX_MESSAGE_BYTES / 4);
-        assertEquals(GuardDecisionCore.MAX_MESSAGE_BYTES, message.getBytes(StandardCharsets.UTF_8).length);
+    void acceptsMessagesLargerThanThePreviousUtf8Limit() {
+        String message = "🙂".repeat(50_000);
+        assertTrue(message.getBytes(StandardCharsets.UTF_8).length > 65_536);
 
         GuardResult.GuardDecision decision = assertInstanceOf(
                 GuardResult.GuardDecision.class,
                 catalog.evaluate("policy", "v1", message));
         assertEquals(GuardOutcome.ALLOW, decision.outcome());
         assertEquals(message, decision.message());
+    }
+
+    @Test
+    void redactsSensitiveTextInALargeMessage() {
+        String message = "ordinary text ".repeat(10_000) + "user@example.test";
+
+        GuardResult.GuardDecision decision = assertInstanceOf(
+                GuardResult.GuardDecision.class,
+                catalog.evaluate("policy", "v1", message));
+        assertEquals(GuardOutcome.REDACT, decision.outcome());
+        assertTrue(decision.message().endsWith("[REDACTED_EMAIL]"));
     }
 
     @Test

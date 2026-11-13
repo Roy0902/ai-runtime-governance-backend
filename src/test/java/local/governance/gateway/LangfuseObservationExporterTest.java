@@ -30,14 +30,16 @@ class LangfuseObservationExporterTest {
     @Test
     void exportsARedactedGenerationWithSessionAndUsage() {
         UUID scopeId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        UUID groupId = UUID.randomUUID();
         UUID traceId = UUID.randomUUID();
 
         exporter.export(new GatewayObservationExporter.Observation(
                 scopeId,
-                UUID.randomUUID(),
-                null,
+                accountId,
+                groupId,
                 traceId,
-                "conversation-key",
+                "scope:conversation-key",
                 "gpt-4o",
                 "email [REDACTED_EMAIL]",
                 "the answer",
@@ -51,14 +53,25 @@ class LangfuseObservationExporterTest {
                 new BigDecimal("0.02000000"),
                 "stop",
                 120,
-                "redact"));
+                "redact",
+                "Person@Example.test",
+                "Person Example",
+                "Research Team"));
 
         List<SpanData> spans = inMemory.getFinishedSpanItems();
         SpanData generation = span(spans, "chat gpt-4o");
         assertNotNull(generation);
         assertEquals("gateway gpt-4o", string(generation, "langfuse.trace.name"));
-        assertEquals(scopeId.toString(), string(generation, "langfuse.user.id"));
-        assertEquals("conversation-key", string(generation, "langfuse.session.id"));
+        assertEquals("person@example.test", string(generation, "langfuse.user.id"));
+        assertEquals("scope:conversation-key", string(generation, "langfuse.session.id"));
+        assertEquals("Person Example", string(generation, "langfuse.trace.metadata.user_name"));
+        assertEquals("person@example.test", string(generation, "langfuse.trace.metadata.user_email"));
+        assertEquals(accountId.toString(), string(generation, "langfuse.trace.metadata.account_id"));
+        assertEquals(groupId.toString(), string(generation, "langfuse.trace.metadata.group_id"));
+        assertEquals("Research Team", string(generation, "langfuse.trace.metadata.group_name"));
+        assertTrue(generation.getAttributes()
+                .get(AttributeKey.stringArrayKey("langfuse.trace.tags"))
+                .contains("group:research-team"));
         assertEquals("generation", string(generation, "langfuse.observation.type"));
         assertEquals("gpt-4o", string(generation, "langfuse.observation.model.name"));
         assertTrue(string(generation, "langfuse.observation.input").contains("[REDACTED_EMAIL]"));
@@ -74,6 +87,8 @@ class LangfuseObservationExporterTest {
         assertNotNull(guard);
         assertEquals("guardrail", string(guard, "langfuse.observation.type"));
         assertEquals("redact", string(guard, "langfuse.observation.output"));
+        assertEquals("person@example.test", string(guard, "langfuse.user.id"));
+        assertEquals("scope:conversation-key", string(guard, "langfuse.session.id"));
     }
 
     @Test
