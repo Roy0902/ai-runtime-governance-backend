@@ -13,18 +13,27 @@ import org.springframework.stereotype.Component;
  * Validates the supported OpenAI-compatible chat-completions subset and finds
  * the message that the request is currently submitting.
  *
- * <p>Only a request whose final message is a plain-text {@code user} message is
- * treated as a new human turn. Tool/assistant continuations are matched to an
- * earlier guarded turn by {@link GatewayConversationService}. Multimodal and
- * non-text content is rejected rather than silently passed through unguarded.
+ * <p>A request whose final message is a {@code user} message is treated as a new
+ * human turn. Tool/assistant continuations are matched to an earlier guarded
+ * turn by {@link GatewayConversationService}. User content may be plain text or
+ * an OpenAI-style content-part array: text parts are guarded, image parts are
+ * reduced to {@link #IMAGE_PLACEHOLDER}, and every other part type is dropped.
+ * Only content with no text and no image is rejected.
  */
 @Component
 public class GatewayRequestParser {
 
     public static final int MAX_MESSAGES = 1_000;
 
+    public static final String IMAGE_PLACEHOLDER = "[image]";
+
     private static final Set<String> ROLES =
             Set.of("system", "developer", "user", "assistant", "tool", "function");
+
+    private static final Set<String> TEXT_PART_TYPES = Set.of("text", "input_text");
+
+    private static final Set<String> IMAGE_PART_TYPES =
+            Set.of("image_url", "image", "input_image");
 
     public enum Mode {
         NEW_TURN,
@@ -95,11 +104,11 @@ public class GatewayRequestParser {
 
         String role = text(last.get("role"));
         Mode mode = "user".equals(role) ? Mode.NEW_TURN : Mode.CONTINUATION;
-        String userText = textContent(messages.get(userIndex).get("content"));
+        String userText = guardableText(messages.get(userIndex).get("content"));
         if (userText == null) {
             throw new APIException(
                     "PROTOCOL_UNSUPPORTED",
-                    "Only plain-text user messages are supported by this gateway.");
+                    "Only text and image user messages are supported by this gateway.");
         }
         // Message text has no separate cap. The request body limit is the only
         // bound, so agent-generated turns such as compaction summaries are
@@ -119,14 +128,38 @@ public class GatewayRequestParser {
         return -1;
     }
 
-    private static String textContent(JsonNode content) {
+    /**
+     * Reduces user message content to the text the guard may inspect. Text parts
+     * are kept in order, image parts become {@link #IMAGE_PLACEHOLDER}, and any
+     * other part type is discarded. Returns {@code null} when no text or image
+     * remains, which means the turn cannot be guarded.
+     */
+    public static String guardableText(JsonNode content) {
         if (content == null || content.isNull()) {
             return null;
         }
         if (content.isTextual()) {
             return content.asText();
         }
-        return null;
+        if (!content.isArray()) {
+            return null;
+        }
+        List<String> parts = new ArrayList<>();
+        for (JsonNode part : content) {
+            if (part == null || !part.isObject()) {
+                continue;
+            }
+            String type = text(part.get("type"));
+            if (TEXT_PART_TYPES.contains(type)) {
+                String value = text(part.get("text"));
+                if (value != null) {
+                    parts.add(value);
+                }
+            } else if (IMAGE_PART_TYPES.contains(type)) {
+                parts.add(IMAGE_PLACEHOLDER);
+            }
+        }
+        return parts.isEmpty() ? null : String.join("\n", parts);
     }
 
     private static String text(JsonNode node) {

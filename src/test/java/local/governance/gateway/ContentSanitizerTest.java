@@ -44,4 +44,24 @@ class ContentSanitizerTest {
         assertTrue(cleaned.contains("Say hello"));
         assertTrue(cleaned.contains("done"));
     }
+
+    @Test
+    void replacesControlCharactersAndUnpairedSurrogates() {
+        String cleaned = ContentSanitizer.cleanText("a\u0000b\u0001c\uD800d\uDC00e");
+
+        assertFalse(cleaned.contains("\u0000"));
+        assertFalse(cleaned.contains("\u0001"));
+        assertFalse(cleaned.contains("\uD800"));
+        assertFalse(cleaned.contains("\uDC00"));
+        assertTrue(cleaned.contains("a\uFFFDb"));
+        assertTrue(cleaned.contains("c\uFFFDd"));
+    }
+
+    @Test
+    void keepsTabsAndNewlines() {
+        String cleaned = ContentSanitizer.cleanText("line one\nline two\tend");
+
+        assertTrue(cleaned.contains("\n"));
+        assertTrue(cleaned.contains("\t"));
+    }
 }

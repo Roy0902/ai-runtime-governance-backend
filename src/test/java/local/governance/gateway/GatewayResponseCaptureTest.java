@@ -91,6 +91,45 @@ class GatewayResponseCaptureTest {
     }
 
     @Test
+    void capturesNonTextContentPartsAsMarkers() {
+        GatewayResponseCapture.Capture result = capture.capture(bytes("""
+                {"choices":[{"message":{"content":[
+                  {"type":"text","text":"hello"},
+                  {"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},
+                  {"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}},
+                  {"type":"file","file":{"file_id":"file-1"}}
+                ]},"finish_reason":"stop"}]}
+                """), "application/json", false);
+
+        assertEquals("hello\n[image]\n[audio]\n[file]", result.output());
+    }
+
+    @Test
+    void capturesAnImageOnlyResponse() {
+        GatewayResponseCapture.Capture result = capture.capture(bytes("""
+                {"choices":[{"message":{"content":[
+                  {"type":"output_image","image_url":{"url":"https://example.test/x.png"}}
+                ]}}]}
+                """), "application/json", false);
+
+        assertEquals("[image]", result.output());
+    }
+
+    @Test
+    void capturesNonTextPartsInStreamingDeltas() {
+        String sse = "data: {\"choices\":[{\"delta\":{\"content\":["
+                + "{\"type\":\"text\",\"text\":\"look\"},"
+                + "{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.test/x.png\"}}"
+                + "]}}]}\n\n"
+                + "data: [DONE]\n\n";
+
+        GatewayResponseCapture.Capture result =
+                capture.capture(bytes(sse), "text/event-stream", false);
+
+        assertEquals("look\n[image]", result.output());
+    }
+
+    @Test
     void marksATruncatedCaptureWithoutAlteringItLater() {
         GatewayResponseCapture.Capture result = capture.capture(bytes("""
                 {"choices":[{"message":{"content":"hello"},"finish_reason":"stop"}]}

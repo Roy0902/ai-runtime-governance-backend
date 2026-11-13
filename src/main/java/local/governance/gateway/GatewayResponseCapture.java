@@ -22,6 +22,15 @@ public class GatewayResponseCapture {
     private static final int MAX_ERROR_MESSAGE = 500;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
+    private static final java.util.Set<String> TEXT_PART_TYPES =
+            java.util.Set.of("text", "input_text", "output_text");
+    private static final java.util.Set<String> IMAGE_PART_TYPES =
+            java.util.Set.of("image_url", "image", "input_image", "output_image");
+    private static final java.util.Set<String> AUDIO_PART_TYPES =
+            java.util.Set.of("audio", "input_audio", "output_audio");
+    private static final java.util.Set<String> FILE_PART_TYPES =
+            java.util.Set.of("file", "input_file", "output_file");
+
     public record ToolCall(String id, String name, String arguments) {}
 
     public record Capture(
@@ -202,7 +211,58 @@ public class GatewayResponseCapture {
     private static void content(JsonNode content, Accumulator accumulator) {
         if (content.isTextual()) {
             accumulator.text.append(content.asText());
+            return;
         }
+        if (content.isArray()) {
+            for (JsonNode part : content) {
+                appendPart(part, accumulator);
+            }
+            return;
+        }
+        if (content.isObject()) {
+            appendPart(content, accumulator);
+        }
+    }
+
+    private static void appendPart(JsonNode part, Accumulator accumulator) {
+        if (part == null || !part.isObject()) {
+            return;
+        }
+        String type = string(part.path("type"));
+        if (TEXT_PART_TYPES.contains(type)) {
+            String text = string(part.path("text"));
+            if (text != null) {
+                accumulator.text.append(text);
+            }
+            return;
+        }
+        appendMarker(accumulator, marker(type));
+    }
+
+    private static void appendMarker(Accumulator accumulator, String marker) {
+        if (marker == null) {
+            return;
+        }
+        if (!accumulator.text.isEmpty() && accumulator.text.charAt(accumulator.text.length() - 1) != '\n') {
+            accumulator.text.append('\n');
+        }
+        accumulator.text.append(marker);
+    }
+
+    private static String marker(String type) {
+        if (type == null || type.isBlank()) {
+            return null;
+        }
+        if (IMAGE_PART_TYPES.contains(type)) {
+            return "[image]";
+        }
+        if (AUDIO_PART_TYPES.contains(type)) {
+            return "[audio]";
+        }
+        if (FILE_PART_TYPES.contains(type)) {
+            return "[file]";
+        }
+        return "[" + type + "]";
     }
 
     private static void reasoning(JsonNode node, Accumulator accumulator) {

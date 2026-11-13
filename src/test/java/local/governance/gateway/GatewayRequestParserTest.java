@@ -64,11 +64,49 @@ class GatewayRequestParserTest {
     }
 
     @Test
-    void rejectsMultimodalUserContentRatherThanForwardingItUnguarded() {
-        APIException exception = assertThrows(APIException.class, () -> parser.parse(bytes("""
+    void acceptsMultimodalContentAndRepresentsImagesWithAPlaceholder() {
+        GatewayRequestParser.Parsed parsed = parser.parse(bytes("""
                 {"model":"m","messages":[{"role":"user","content":[
                   {"type":"text","text":"hello"},
-                  {"type":"image_url","image_url":{"url":"https://example.test/x.png"}}
+                  {"type":"image_url","image_url":{"url":"https://example.test/x.png"}},
+                  {"type":"text","text":"what is this?"}
+                ]}]}
+                """));
+
+        assertEquals(GatewayRequestParser.Mode.NEW_TURN, parsed.mode());
+        assertEquals("hello\n[image]\nwhat is this?", parsed.userText());
+    }
+
+    @Test
+    void acceptsImageOnlyContent() {
+        GatewayRequestParser.Parsed parsed = parser.parse(bytes("""
+                {"model":"m","messages":[{"role":"user","content":[
+                  {"type":"input_image","image_url":"data:image/png;base64,AAAA"}
+                ]}]}
+                """));
+
+        assertEquals(GatewayRequestParser.IMAGE_PLACEHOLDER, parsed.userText());
+    }
+
+    @Test
+    void discardsNonTextNonImageParts() {
+        GatewayRequestParser.Parsed parsed = parser.parse(bytes("""
+                {"model":"m","messages":[{"role":"user","content":[
+                  {"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}},
+                  {"type":"input_text","text":"describe"},
+                  {"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},
+                  {"type":"file","file":{"file_id":"file-1"}}
+                ]}]}
+                """));
+
+        assertEquals("describe\n[image]", parsed.userText());
+    }
+
+    @Test
+    void rejectsContentWithoutTextOrImages() {
+        APIException exception = assertThrows(APIException.class, () -> parser.parse(bytes("""
+                {"model":"m","messages":[{"role":"user","content":[
+                  {"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}
                 ]}]}
                 """)));
 

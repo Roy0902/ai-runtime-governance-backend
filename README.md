@@ -282,15 +282,18 @@ The gateway returns OpenAI-shaped errors such as:
 
 #### What the guard does
 
-- The final message must be a plain-text `user` message for a new turn. The guard
-  evaluates that message with the same deterministic detector catalog described
-  above, exposed through a LangChain4j `InputGuardrail`.
-- **Allow** forwards the original bytes unchanged.
+- The final message must be a `user` message for a new turn. The guard evaluates
+  that message with the same deterministic detector catalog described above,
+  exposed through a LangChain4j `InputGuardrail`. Content may be plain text or an
+  OpenAI-style content-part array: text parts are guarded in order, image parts
+  are represented by `[image]`, and other part types are discarded. Content with
+  no text and no image is rejected as `PROTOCOL_UNSUPPORTED`.
+- **Allow** forwards the original bytes unchanged, including any image parts.
 - **Redact** rewrites the submitted message and every earlier user message in the
-  conversation before forwarding. Every forwarded turn also re-checks earlier
-  user messages for redactions, so a secret that appeared in history is not
-  replayed in a later turn, where clients normally resend the original
-  conversation.
+  conversation before forwarding. Multimodal content is reduced to its redacted
+  guard text. Every forwarded turn also re-checks earlier user messages for
+  redactions, so a secret that appeared in history is not replayed in a later
+  turn, where clients normally resend the original conversation.
 - **Deny** and **require approval** are fail-closed: the gateway records the
   decision, forwards nothing, and returns `GUARD_DENIED` or
   `GUARD_APPROVAL_REQUIRED`. The interactive approval UI is a later slice.
@@ -460,8 +463,12 @@ supports `stream_options`.
   compaction summaries are guarded instead of rejected.
 - Only `chat/completions` is supported; the Responses API and Anthropic Messages
   are later adapters.
-- User content must be a string. Multimodal/array content is rejected with
-  `PROTOCOL_UNSUPPORTED` rather than forwarded unguarded.
+- User content may be plain text or an OpenAI-style content-part array. Text is
+  guarded in order, images become `[image]`, and other part types are discarded;
+  content with no text or image is rejected with `PROTOCOL_UNSUPPORTED`.
+- Non-text model output parts are recorded as markers such as `[image]`,
+  `[audio]`, and `[file]`, and invalid Unicode/control characters are replaced
+  before storage or export.
 - Approval is fail-closed, not interactive.
 - The conversation fingerprint is a pragmatic correlation key, not a per-turn
   client contract. Concurrent identical conversations can collide; sending a

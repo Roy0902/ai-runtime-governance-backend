@@ -75,6 +75,7 @@ public class ContentSanitizer {
         if (text == null) {
             return null;
         }
+        text = sanitizeUnicode(text);
         java.util.regex.Matcher dataUri = DATA_URI.matcher(text);
         if (dataUri.find()) {
             String mime = dataUri.group(1) == null ? "binary" : dataUri.group(1);
@@ -87,5 +88,36 @@ public class ContentSanitizer {
             return text.substring(0, MAX_TEXT) + "\n[truncated]";
         }
         return text;
+    }
+
+    /**
+     * Binary or malformed output can contain unpaired surrogates and control
+     * characters that JSON/PostgreSQL cannot store. Replace them with the
+     * Unicode replacement character while keeping ordinary whitespace.
+     */
+    private static String sanitizeUnicode(String text) {
+        StringBuilder builder = new StringBuilder(text.length());
+        for (int index = 0; index < text.length(); index += 1) {
+            char value = text.charAt(index);
+            if (Character.isHighSurrogate(value)) {
+                if (index + 1 < text.length() && Character.isLowSurrogate(text.charAt(index + 1))) {
+                    builder.append(value).append(text.charAt(index + 1));
+                    index += 1;
+                } else {
+                    builder.append('\uFFFD');
+                }
+            } else if (Character.isLowSurrogate(value)) {
+                builder.append('\uFFFD');
+            } else if (value == '\u0000'
+                    || (Character.isISOControl(value)
+                            && value != '\t'
+                            && value != '\n'
+                            && value != '\r')) {
+                builder.append('\uFFFD');
+            } else {
+                builder.append(value);
+            }
+        }
+        return builder.toString();
     }
 }
