@@ -38,6 +38,18 @@ public class GatewayTraceRecorder {
         this.sanitizer = new ContentSanitizer(objectMapper);
     }
 
+    /**
+     * Resolves the trace that represents a client session. Every human turn in
+     * one session appends its prompt events to the same trace, so the timeline
+     * groups prompts under the session instead of showing one trace per prompt.
+     */
+    public UUID resolveTraceId(UUID scopeId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return Uuid7.generate();
+        }
+        return timeline.traceIdForSession(scopeId, sessionId).orElseGet(Uuid7::generate);
+    }
+
     @Transactional
     public UUID beginGuardedTurn(
             UUID scopeId,
@@ -47,9 +59,10 @@ public class GatewayTraceRecorder {
             String policyId,
             String policyVersion,
             List<String> ruleIds,
-            String promptContent) {
+            String promptContent,
+            String sessionId) {
         Instant now = clock.instant();
-        timeline.insertTrace(new TraceRow(
+        timeline.insertTraceIfAbsent(new TraceRow(
                 traceId,
                 scopeId,
                 now,
@@ -57,6 +70,7 @@ public class GatewayTraceRecorder {
                 "complete",
                 outcome == null ? null : outcome.name().toLowerCase(java.util.Locale.ROOT),
                 model,
+                sessionId,
                 "guarded",
                 "unknown",
                 "unknown",
@@ -109,9 +123,14 @@ public class GatewayTraceRecorder {
     }
 
     @Transactional
-    public UUID beginBypassedTurn(UUID scopeId, UUID traceId, String model, String promptContent) {
+    public UUID beginBypassedTurn(
+            UUID scopeId,
+            UUID traceId,
+            String model,
+            String promptContent,
+            String sessionId) {
         Instant now = clock.instant();
-        timeline.insertTrace(new TraceRow(
+        timeline.insertTraceIfAbsent(new TraceRow(
                 traceId,
                 scopeId,
                 now,
@@ -119,6 +138,7 @@ public class GatewayTraceRecorder {
                 "complete",
                 null,
                 model,
+                sessionId,
                 "bypassed",
                 "unknown",
                 "unknown",
@@ -160,9 +180,18 @@ public class GatewayTraceRecorder {
             String policyVersion,
             List<String> ruleIds,
             boolean evaluationFailed,
-            String promptContent) {
+            String promptContent,
+            String sessionId) {
         beginGuardedTurn(
-                scopeId, traceId, model, outcome, policyId, policyVersion, ruleIds, promptContent);
+                scopeId,
+                traceId,
+                model,
+                outcome,
+                policyId,
+                policyVersion,
+                ruleIds,
+                promptContent,
+                sessionId);
         timeline.updateTraceCompletion(
                 scopeId,
                 traceId,
@@ -232,7 +261,7 @@ public class GatewayTraceRecorder {
                         List.of(),
                         null,
                         null,
-                        "observed",
+                        "unknown",
                         toolContent(call)));
             }
         }

@@ -251,11 +251,12 @@ public class TimelineReadService {
                 row.executionStatus(),
                 row.telemetryStatus(),
                 row.guardOutcome(),
+                row.sessionId(),
                 false);
     }
 
     private static TraceSummaryResponse tombstoneTrace(UUID traceId) {
-        return new TraceSummaryResponse(traceId, null, null, null, null, true);
+        return new TraceSummaryResponse(traceId, null, null, null, null, null, true);
     }
 
     private static TraceDetailResponse detail(TraceRow row) {
@@ -270,6 +271,7 @@ public class TimelineReadService {
                 row.telemetryStatus(),
                 row.guardOutcome(),
                 row.identity(),
+                row.sessionId(),
                 new CoverageResponse(row.inputCoverage(), row.responseCoverage(), row.toolsCoverage()),
                 hasLoss
                         ? new LossResponse(row.lossCauseCode(), row.lossMissingCount(), row.lossFrom(), row.lossTo())

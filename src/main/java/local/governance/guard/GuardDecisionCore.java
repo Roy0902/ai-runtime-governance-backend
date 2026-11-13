@@ -1,6 +1,5 @@
 package local.governance.guard;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -15,7 +14,6 @@ import java.util.TreeSet;
  */
 public final class GuardDecisionCore {
 
-    public static final int MAX_MESSAGE_BYTES = 65_536;
     public static final int MAX_FINDINGS = 1_024;
 
     private static final Set<String> MARKERS = Set.of(
@@ -43,8 +41,6 @@ public final class GuardDecisionCore {
         }
         if (hasUnpairedSurrogate(message)) {
             reasons.add("INVALID_TEXT");
-        } else if (message.getBytes(StandardCharsets.UTF_8).length > MAX_MESSAGE_BYTES) {
-            reasons.add("MESSAGE_LIMIT_EXCEEDED");
         }
 
         List<GuardFinding> safeFindings = findings == null ? List.of() : findings;

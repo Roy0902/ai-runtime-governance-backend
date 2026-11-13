@@ -90,6 +90,7 @@ public class ActivityMetadataService {
                 "unknown",
                 null,
                 integration,
+                null,
                 "unknown",
                 "unknown",
                 "unknown",

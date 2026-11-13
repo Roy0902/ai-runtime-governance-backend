@@ -327,6 +327,27 @@ outcome and rule IDs. Continuations of a redacted turn do not re-export the
 prompt. Export is asynchronous and bounded; a Langfuse outage never fails the
 model request or changes the local timeline.
 
+Langfuse grouping is driven by attributes supplied by the gateway, not by
+Langfuse itself:
+
+- `langfuse.user.id` is the account email (falling back to the account UUID),
+  and `langfuse.trace.metadata.account_id`, `user_email`, and `user_name` carry
+  the stable id and the current profile values.
+- `langfuse.session.id` is `<scope-id>:<session-id>`, taken from the agent's
+  `x-opencode-session` header, or from a client-supplied
+  `X-Governance-Conversation-Id` header when the agent session is absent. The
+  scope prefix prevents two accounts from merging sessions; values that are too
+  long or contain unexpected characters are ignored rather than rejected. The
+  local timeline stores the same session id on the trace, so every prompt in one
+  agent session is grouped under one session instead of appearing as a separate
+  trace.
+- Group keys add `langfuse.trace.metadata.group_id` / `group_name` and a
+  `group:<slug>` tag. Langfuse has no native group dimension, so tags and
+  metadata are the supported way to filter by group.
+
+Trace-level attributes are written to every span, including the guardrail
+child, because Langfuse filters and aggregates on observations.
+
 New gateway traces use a UUIDv7 identifier, and the same 128-bit value is used as
 the OTLP trace ID. The Langfuse trace ID therefore equals `activity_trace.id`,
 and every model call in one conversation is grouped under one Langfuse trace.
@@ -433,6 +454,10 @@ supports `stream_options`.
 
 #### Current gateway limits
 
+- Message text has no separate size cap; the request body limit
+  (`GOVERNANCE_GATEWAY_MAX_REQUEST_BYTES`) is the only bound. Guard evaluation
+  scans the whole submitted message, so long agent-generated turns such as
+  compaction summaries are guarded instead of rejected.
 - Only `chat/completions` is supported; the Responses API and Anthropic Messages
   are later adapters.
 - User content must be a string. Multimodal/array content is rejected with
@@ -440,7 +465,8 @@ supports `stream_options`.
 - Approval is fail-closed, not interactive.
 - The conversation fingerprint is a pragmatic correlation key, not a per-turn
   client contract. Concurrent identical conversations can collide; sending a
-  stable `X-Governance-Conversation-Id` header avoids this.
+  stable `x-opencode-session` or `X-Governance-Conversation-Id` header avoids
+  this.
 - The local timeline records the guard decision and model metadata, not prompt or
   output bodies. Those exist only in memory and, when enabled, in Langfuse.
 - The built-in catalog currently has no production `DENY` rule; the deny path is

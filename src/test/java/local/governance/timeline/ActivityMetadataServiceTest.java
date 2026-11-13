@@ -41,7 +41,7 @@ class ActivityMetadataServiceTest {
         UUID traceId = UUID.randomUUID();
         UUID eventId = UUID.randomUUID();
         TraceRow trace = new TraceRow(traceId, scope, NOW, "unknown", "unknown", null,
-                "langchain4j", "unknown", "unknown", "unknown", null, null, null, null);
+                "langchain4j", null, "unknown", "unknown", "unknown", null, null, null, null);
         when(timeline.trace(scope, traceId)).thenReturn(Optional.of(trace));
         when(timeline.contentHash(scope, eventId)).thenReturn(Optional.empty());
 

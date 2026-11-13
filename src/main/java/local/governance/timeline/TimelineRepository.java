@@ -29,6 +29,7 @@ public class TimelineRepository {
             String telemetryStatus,
             String guardOutcome,
             String identity,
+            String sessionId,
             String inputCoverage,
             String responseCoverage,
             String toolsCoverage,
@@ -107,6 +108,23 @@ public class TimelineRepository {
                 .optional();
     }
 
+    /**
+     * Finds the retained trace that already represents a client session. A
+     * session has one trace regardless of how many human turns it contains.
+     */
+    public Optional<UUID> traceIdForSession(UUID scopeId, String sessionId) {
+        return jdbc.sql("""
+                SELECT id FROM activity_trace
+                WHERE scope_id = :scope AND session_id = :session
+                ORDER BY received_at DESC, id DESC
+                LIMIT 1
+                """)
+                .param("scope", scopeId)
+                .param("session", sessionId)
+                .query((rs, rowNum) -> rs.getObject("id", UUID.class))
+                .optional();
+    }
+
     public List<EventRow> events(UUID scopeId, UUID traceId, int limit) {
         return jdbc.sql("""
                 SELECT e.*, (p.id IS NOT NULL) AS parent_exists
@@ -157,12 +175,12 @@ public class TimelineRepository {
         jdbc.sql("""
                 INSERT INTO activity_trace (
                     id, scope_id, received_at, execution_status, telemetry_status,
-                    guard_outcome, identity, input_coverage, response_coverage,
+                    guard_outcome, identity, session_id, input_coverage, response_coverage,
                     tools_coverage, loss_cause_code, loss_missing_count, loss_from,
                     loss_to)
                 VALUES (
                     :id, :scope, :receivedAt, :executionStatus, :telemetryStatus,
-                    :guardOutcome, :identity, :inputCoverage, :responseCoverage,
+                    :guardOutcome, :identity, :sessionId, :inputCoverage, :responseCoverage,
                     :toolsCoverage, :lossCauseCode, :lossMissingCount, :lossFrom,
                     :lossTo)
                 """ + conflictClause)
@@ -173,6 +191,7 @@ public class TimelineRepository {
                 .param("telemetryStatus", row.telemetryStatus())
                 .param("guardOutcome", row.guardOutcome())
                 .param("identity", row.identity())
+                .param("sessionId", row.sessionId())
                 .param("inputCoverage", row.inputCoverage())
                 .param("responseCoverage", row.responseCoverage())
                 .param("toolsCoverage", row.toolsCoverage())
@@ -511,6 +530,7 @@ public class TimelineRepository {
                 rs.getString("telemetry_status"),
                 rs.getString("guard_outcome"),
                 rs.getString("identity"),
+                rs.getString("session_id"),
                 rs.getString("input_coverage"),
                 rs.getString("response_coverage"),
                 rs.getString("tools_coverage"),

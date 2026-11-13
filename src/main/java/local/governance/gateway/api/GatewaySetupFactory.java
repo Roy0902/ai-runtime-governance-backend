@@ -61,7 +61,6 @@ public class GatewaySetupFactory {
         Map<String, Object> options = new LinkedHashMap<>();
         options.put("baseURL", baseUrl);
         options.put("apiKey", token);
-        options.put("headers", Map.of("X-Governance-Conversation-Id", "opencode"));
         Map<String, Object> provider = new LinkedHashMap<>();
         provider.put("npm", "@ai-sdk/openai-compatible");
         provider.put("name", "AI Runtime Governance");
